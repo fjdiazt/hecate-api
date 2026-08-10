@@ -8,6 +8,14 @@ COPY assets ./assets
 COPY src/virtua-agent-app ./src/virtua-agent-app
 RUN npm run build --prefix src/virtua-agent-app
 
+FROM node:22-bookworm-slim AS codex-runtime
+ARG CODEX_VERSION=0.147.0
+RUN npm install --global "@openai/codex@${CODEX_VERSION}" \
+    && codex --version \
+    && mkdir -p /codex-home /run/codex /work
+ENV CODEX_HOME=/codex-home
+ENTRYPOINT ["codex"]
+
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS api-build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src

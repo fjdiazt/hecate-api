@@ -1,4 +1,18 @@
 services:
+  codex:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: codex-runtime
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["rm -f /run/codex/app-server.sock && exec codex app-server --listen unix:///run/codex/app-server.sock"]
+    environment:
+      - CODEX_HOME=/codex-home
+    volumes:
+      - codex_home:/codex-home
+      - codex_socket:/run/codex
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -11,14 +25,21 @@ services:
       - Upstream__BaseUrl=${UPSTREAM_BASE_URL:-http://192.168.100.101:8080}
       - Upstream__RequestTimeoutSeconds=${UPSTREAM_REQUEST_TIMEOUT_SECONDS:-100}
       - TraceStore__ConnectionString=Data Source=/data/virtua-agent.db
+      - Codex__SocketPath=/run/codex/app-server.sock
+      - Codex__WorkingDirectory=/work
       - Build__Sha=${BUILD_SHA:-local}
       - Build__Branch=${BUILD_BRANCH:-local}
       - Build__Time=${BUILD_TIME:-local}
     volumes:
       - virtua_agent_data:/data
       - dp_keys:/root/.aspnet/DataProtection-Keys
+      - codex_socket:/run/codex
+    depends_on:
+      - codex
     restart: unless-stopped
 
 volumes:
+  codex_home:
+  codex_socket:
   virtua_agent_data:
   dp_keys:
