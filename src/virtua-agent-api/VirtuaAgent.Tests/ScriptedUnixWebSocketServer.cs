@@ -21,7 +21,7 @@ internal sealed class ScriptedUnixWebSocketServer : IAsyncDisposable
 
     public string Path { get; }
 
-    public static Task<ScriptedUnixWebSocketServer> StartAsync(Func<WebSocket, Task> script)
+    public static Task<ScriptedUnixWebSocketServer> StartAsync(params Func<WebSocket, Task>[] scripts)
     {
         var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"va-{Guid.NewGuid():N}.sock");
         var listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
@@ -29,15 +29,18 @@ internal sealed class ScriptedUnixWebSocketServer : IAsyncDisposable
         listener.Listen(1);
         var run = Task.Run(async () =>
         {
-            using var socket = await listener.AcceptAsync();
-            await using var stream = new NetworkStream(socket, ownsSocket: false);
-            await UpgradeAsync(stream);
-            using var webSocket = WebSocket.CreateFromStream(
-                stream,
-                isServer: true,
-                subProtocol: null,
-                keepAliveInterval: Timeout.InfiniteTimeSpan);
-            await script(webSocket);
+            foreach (var script in scripts)
+            {
+                using var socket = await listener.AcceptAsync();
+                await using var stream = new NetworkStream(socket, ownsSocket: false);
+                await UpgradeAsync(stream);
+                using var webSocket = WebSocket.CreateFromStream(
+                    stream,
+                    isServer: true,
+                    subProtocol: null,
+                    keepAliveInterval: Timeout.InfiniteTimeSpan);
+                await script(webSocket);
+            }
         });
         return Task.FromResult(new ScriptedUnixWebSocketServer(path, listener, run));
     }

@@ -6,4 +6,5 @@ public sealed record CodexOptions
     public string WorkingDirectory { get; init; } = "/work";
     public int ConnectTimeoutSeconds { get; init; } = 5;
     public int InterruptTimeoutSeconds { get; init; } = 5;
+    public int LoginTimeoutSeconds { get; init; } = 600;
 }
