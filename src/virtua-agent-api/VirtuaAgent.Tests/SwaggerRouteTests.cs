@@ -44,4 +44,20 @@ public sealed class SwaggerRouteTests
         var pipelineSchema = schemas.GetProperty("PipelineRequestDto");
         Assert.True(pipelineSchema.GetProperty("properties").TryGetProperty("protocol", out _));
     }
+
+    [Fact]
+    public async Task SwaggerJsonIncludesCodexAccountRoutes()
+    {
+        await using var factory = new WebApplicationFactory<Program>();
+        var response = await factory.CreateClient().GetAsync("/swagger/v1/swagger.json");
+        var json = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("\"/v1/codex/account\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"/v1/codex/account/login\"", json, StringComparison.Ordinal);
+        Assert.Contains("GetCodexAccount", json, StringComparison.Ordinal);
+        Assert.Contains("StartCodexLogin", json, StringComparison.Ordinal);
+        Assert.Contains("CancelCodexLogin", json, StringComparison.Ordinal);
+        Assert.Contains("LogoutCodexAccount", json, StringComparison.Ordinal);
+    }
 }

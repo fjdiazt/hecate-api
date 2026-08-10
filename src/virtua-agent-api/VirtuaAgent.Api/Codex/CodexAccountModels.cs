@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace VirtuaAgent.Codex;
 
 public static class CodexAccountStatuses
@@ -12,7 +14,7 @@ public static class CodexAccountStatuses
 public sealed record CodexAccountState(
     string Status,
     string? Email = null,
-    string? PlanType = null,
-    string? VerificationUrl = null,
-    string? UserCode = null,
+    [property: JsonPropertyName("plan_type")] string? PlanType = null,
+    [property: JsonPropertyName("verification_url")] string? VerificationUrl = null,
+    [property: JsonPropertyName("user_code")] string? UserCode = null,
     string? Error = null);

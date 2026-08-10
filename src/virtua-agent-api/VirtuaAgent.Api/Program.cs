@@ -64,6 +64,7 @@ builder.Services.AddHttpClient<IOpenAiCompatibleUpstreamClient, OpenAiCompatible
     client.Timeout = TimeSpan.FromSeconds(Math.Max(1, options.RequestTimeoutSeconds));
 });
 builder.Services.AddSingleton<ICodexAppServerClient, CodexAppServerClient>();
+builder.Services.AddSingleton<CodexAccountManager>();
 builder.Services.AddSingleton<CodexSubscriptionClient>();
 builder.Services.AddSingleton<ModelEndpointDispatcher>();
 
@@ -98,6 +99,26 @@ app.MapGet("/v1/models", ModelsEndpoint.ListAsync)
     .WithSummary("List OpenAI-compatible upstream models")
     .Produces<ModelListResponse>()
     .Produces<OpenAiErrorResponse>(StatusCodes.Status502BadGateway);
+app.MapGet("/v1/codex/account", CodexAccountEndpoint.GetAsync)
+    .WithName("GetCodexAccount")
+    .WithSummary("Get the global Codex account state")
+    .Produces<CodexAccountState>();
+app.MapPost("/v1/codex/account/login", CodexAccountEndpoint.StartLoginAsync)
+    .WithName("StartCodexLogin")
+    .WithSummary("Start ChatGPT device login")
+    .Accepts<StartCodexLoginRequest>("application/json")
+    .Produces<CodexAccountState>()
+    .Produces<CodexAccountState>(StatusCodes.Status503ServiceUnavailable);
+app.MapDelete("/v1/codex/account/login", CodexAccountEndpoint.CancelLoginAsync)
+    .WithName("CancelCodexLogin")
+    .WithSummary("Cancel ChatGPT device login")
+    .Produces<CodexAccountState>()
+    .Produces<CodexAccountState>(StatusCodes.Status503ServiceUnavailable);
+app.MapDelete("/v1/codex/account", CodexAccountEndpoint.LogoutAsync)
+    .WithName("LogoutCodexAccount")
+    .WithSummary("Sign out the global Codex account")
+    .Produces<CodexAccountState>()
+    .Produces<CodexAccountState>(StatusCodes.Status503ServiceUnavailable);
 app.MapGet("/v1/pipeline-models", PipelineModelsEndpoint.ListAsync)
     .WithName("ListPipelineModels")
     .WithSummary("List saved Virtua Agent Pipeline-backed models");
