@@ -27,7 +27,6 @@
 - Modify: `src/virtua-agent-api/VirtuaAgent.Api/ModelEndpoints/SqliteModelEndpointStore.cs`
 - Modify: `src/virtua-agent-api/VirtuaAgent.Api/ModelEndpoints/ModelEndpointDispatcher.cs`
 - Modify: `src/virtua-agent-api/VirtuaAgent.Api/ModelEndpoints/ModelEndpointsEndpoint.cs`
-- Modify: `src/virtua-agent-api/VirtuaAgent.Api/ModelEndpoints/IModelEndpointStore.cs` if signatures contain `Kind`
 - Modify: `src/virtua-agent-api/VirtuaAgent.Api/Endpoints/ChatCompletionsEndpoint.cs`
 - Modify: `src/virtua-agent-api/VirtuaAgent.Api/Orchestration/PipelineExecutor.cs`
 - Modify: `src/virtua-agent-api/VirtuaAgent.Tests/SqliteModelEndpointStoreTests.cs`
@@ -86,7 +85,7 @@ Update all reads, writes, and selects to use `type`.
 ```powershell
 dotnet test src/virtua-agent-api/VirtuaAgent.slnx
 npm run build --prefix src/virtua-agent-app
-rg "ModelEndpointKind|ModelEndpointKinds|\.Kind\b|\bkind\b" src README.md docs -g "!docs/superpowers/specs/2026-08-10-codex-account-ui-design.md" -g "!docs/superpowers/plans/2026-08-10-codex-account-ui.md"
+rg "ModelEndpointKind|ModelEndpointKinds|\.Kind\b|\bkind\b" src
 ```
 
 Expected: tests and build pass. Remaining `kind` matches are unrelated prose or deliberate migration-test SQL only; inspect each.
@@ -94,7 +93,7 @@ Expected: tests and build pass. Remaining `kind` matches are unrelated prose or 
 - [ ] **Step 6: Commit**
 
 ```powershell
-git add src/virtua-agent-api src/virtua-agent-app
+git add src/virtua-agent-api/VirtuaAgent.Api/ModelEndpoints/ModelEndpointModels.cs src/virtua-agent-api/VirtuaAgent.Api/ModelEndpoints/SqliteModelEndpointStore.cs src/virtua-agent-api/VirtuaAgent.Api/ModelEndpoints/ModelEndpointDispatcher.cs src/virtua-agent-api/VirtuaAgent.Api/ModelEndpoints/ModelEndpointsEndpoint.cs src/virtua-agent-api/VirtuaAgent.Api/Endpoints/ChatCompletionsEndpoint.cs src/virtua-agent-api/VirtuaAgent.Api/Orchestration/PipelineExecutor.cs src/virtua-agent-api/VirtuaAgent.Tests/SqliteModelEndpointStoreTests.cs src/virtua-agent-api/VirtuaAgent.Tests/ModelEndpointsEndpointTests.cs src/virtua-agent-api/VirtuaAgent.Tests/ModelEndpointDispatcherTests.cs src/virtua-agent-api/VirtuaAgent.Tests/ChatCompletionsEndpointTests.cs src/virtua-agent-api/VirtuaAgent.Tests/PipelineExecutorTests.cs src/virtua-agent-app/src/types.ts src/virtua-agent-app/src/App.tsx
 git commit -m "refactor: rename endpoint kind to type"
 ```
 
@@ -121,7 +120,7 @@ Build one test-only scripted Unix-socket server. It should:
 5. Wrap the stream with `WebSocket.CreateFromStream(..., isServer: true, ...)`.
 6. Exchange scripted text frames and record requests.
 
-Add failing tests for initialization, model discovery, turn streaming, interruption, server close, and a fragmented text response. Assert every connection closes.
+Add failing tests for initialization, model discovery, turn streaming, interruption, server close, and a fragmented text response. Add one ordering test where a notification arrives before the matching request response; the later reader must still receive that notification. Assert every connection closes.
 
 - [ ] **Step 2: Run focused tests and confirm failure**
 
@@ -153,7 +152,7 @@ var webSocket = new ClientWebSocket();
 await webSocket.ConnectAsync(new Uri("ws://localhost/"), invoker, cancellationToken);
 ```
 
-Send JSON as WebSocket text messages. Accumulate fragmented text frames until `EndOfMessage`. Reject binary frames. Treat premature close as a connection error. Dispose WebSocket, invoker/handler, and Unix socket deterministically.
+Send JSON as WebSocket text messages. Accumulate fragmented text frames until `EndOfMessage`. Reject binary frames. Treat premature close as a connection error. Use one private wire-read method. `RequestAsync` reads directly from the wire and retains notifications or unmatched responses in a small ordered queue while waiting for its own response; it must not drain that queue. Public `ReadAsync` drains the queue before reading another frame from the wire. Never discard an event during request correlation. Dispose WebSocket, invoker/handler, and Unix socket deterministically.
 
 - [ ] **Step 4: Keep authentication outside initialization**
 
@@ -172,7 +171,7 @@ Expected: all focused tests pass over WebSocket frames.
 - [ ] **Step 6: Commit**
 
 ```powershell
-git add src/virtua-agent-api/VirtuaAgent.Api/Codex src/virtua-agent-api/VirtuaAgent.Tests
+git add src/virtua-agent-api/VirtuaAgent.Api/Codex/CodexAppServerConnection.cs src/virtua-agent-api/VirtuaAgent.Api/Codex/CodexAppServerClient.cs src/virtua-agent-api/VirtuaAgent.Api/Codex/CodexAppServerProtocol.cs src/virtua-agent-api/VirtuaAgent.Tests/ScriptedUnixWebSocketServer.cs src/virtua-agent-api/VirtuaAgent.Tests/CodexAppServerClientTests.cs src/virtua-agent-api/VirtuaAgent.Tests/CodexSubscriptionClientTests.cs
 git commit -m "fix: use Codex websocket transport"
 ```
 
@@ -192,8 +191,9 @@ git commit -m "fix: use Codex websocket transport"
 Using `ScriptedUnixWebSocketServer`, add failing tests for:
 
 - connected, disconnected, and unavailable reads;
-- start returning verification URL and code;
+- start sending `type: "chatgptDeviceCode"` and returning verification URL and code;
 - matching completion notification followed by `account/read`;
+- completion arriving before the start response and surviving request correlation;
 - duplicate and concurrent starts sharing exactly one `account/login/start`;
 - cancellation sending `account/login/cancel` with the Codex login ID;
 - timeout becoming `error` and cancelling the Codex login;
@@ -224,7 +224,7 @@ public sealed record CodexAccountState(
     string? Error = null);
 ```
 
-Add only protocol records/parsers needed by `account/read`, `account/login/start`, `account/login/completed`, `account/login/cancel`, and `account/logout`. Add `LoginTimeoutSeconds = 600` to `CodexOptions` for deterministic timeout tests.
+Add only protocol records/parsers needed by `account/read`, `account/login/start`, `account/login/completed`, `account/login/cancel`, and `account/logout`. Start login with exactly `{ type = "chatgptDeviceCode" }`. Reject a start response unless it contains a nonempty login ID, nonempty user code, and an absolute HTTPS verification URL. Map invalid protocol data to a sanitized login error without returning raw values. Add `LoginTimeoutSeconds = 600` to `CodexOptions` for deterministic timeout tests.
 
 - [ ] **Step 3: Implement one concrete singleton manager**
 
@@ -251,7 +251,7 @@ The attempt owner is the connection's sole reader. It retains verification data 
 - Connect/initialize failure maps to unavailable.
 - Login failure or timeout maps to error with sanitized text.
 - Logout first cancels an active attempt.
-- After uncertain logout failure, perform fresh `account/read`; return verified state or unavailable, never stale connected metadata.
+- After uncertain logout failure, open a new initialized connection and perform `account/read`; return verified state or unavailable, never stale connected metadata.
 - Do not log state values or raw payloads.
 
 - [ ] **Step 5: Run focused tests**
@@ -265,7 +265,7 @@ Expected: all account state, concurrency, timeout, and cleanup tests pass.
 - [ ] **Step 6: Commit**
 
 ```powershell
-git add src/virtua-agent-api/VirtuaAgent.Api/Codex src/virtua-agent-api/VirtuaAgent.Tests
+git add src/virtua-agent-api/VirtuaAgent.Api/Codex/CodexAccountModels.cs src/virtua-agent-api/VirtuaAgent.Api/Codex/CodexAccountManager.cs src/virtua-agent-api/VirtuaAgent.Api/Codex/CodexAppServerProtocol.cs src/virtua-agent-api/VirtuaAgent.Api/Codex/CodexOptions.cs src/virtua-agent-api/VirtuaAgent.Tests/CodexAccountManagerTests.cs
 git commit -m "feat: manage Codex account login"
 ```
 
@@ -331,7 +331,7 @@ Expected: full backend suite passes.
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add src/virtua-agent-api/VirtuaAgent.Api/Endpoints/CodexAccountEndpoint.cs src/virtua-agent-api/VirtuaAgent.Api/Program.cs src/virtua-agent-api/VirtuaAgent.Tests
+git add src/virtua-agent-api/VirtuaAgent.Api/Endpoints/CodexAccountEndpoint.cs src/virtua-agent-api/VirtuaAgent.Api/Program.cs src/virtua-agent-api/VirtuaAgent.Tests/CodexAccountEndpointTests.cs src/virtua-agent-api/VirtuaAgent.Tests/SwaggerRouteTests.cs
 git commit -m "feat: expose Codex account routes"
 ```
 
@@ -368,7 +368,7 @@ export interface CodexAccountState {
 }
 ```
 
-Add functions for GET state, POST login, DELETE login, and DELETE account. Login must explicitly send `Content-Type: application/json` with body `{}`. Reuse existing JSON/error handling.
+Add functions for GET state, POST login, DELETE login, and DELETE account. Login must explicitly send `Content-Type: application/json` with body `{}`. Add one account-specific response reader: parse and return `CodexAccountState` for both `200` and the state-bearing `503`; use the existing error extraction only for other statuses or malformed bodies. Do not route account commands through generic `readJson`, because it discards non-2xx state bodies.
 
 - [ ] **Step 2: Build the panel with all five states**
 
@@ -380,9 +380,9 @@ Add functions for GET state, POST login, DELETE login, and DELETE account. Login
 - `connected`: green status, email, plan, Switch account, Sign out.
 - `error`: error message, Retry.
 
-Poll every two seconds only while `status === "connecting"`; clear the timer on state change and unmount. Refreshing while connecting must reopen the dialog from GET state. Close the dialog automatically on connected.
+Poll every two seconds only while `status === "connecting"`. Use recursive `setTimeout` scheduled after each request completes so polls never overlap. Stop scheduling on state change and unmount. Refreshing while connecting must reopen the dialog from GET state. Close the dialog automatically on connected.
 
-Use the browser clipboard API. Open the verification URL only after explicit user action with `target="_blank"` and `rel="noreferrer"`. Confirm sign out. Switch account confirms, logs out, then starts login.
+Use the browser clipboard API and leave the code selectable if copying fails. Open the verification URL only after explicit user action with `target="_blank"` and `rel="noopener noreferrer"`. Confirm sign out. Switch account confirms, logs out, then starts login.
 
 - [ ] **Step 3: Place and style the section**
 
@@ -410,7 +410,7 @@ Save evidence under `.logs/`; do not commit screenshots.
 - [ ] **Step 6: Commit**
 
 ```powershell
-git add src/virtua-agent-app
+git add src/virtua-agent-app/src/CodexAccountPanel.tsx src/virtua-agent-app/src/types.ts src/virtua-agent-app/src/api.ts src/virtua-agent-app/src/App.tsx src/virtua-agent-app/src/styles.css
 git commit -m "feat: add Codex account settings"
 ```
 
@@ -440,23 +440,30 @@ dotnet test src/virtua-agent-api/VirtuaAgent.slnx
 npm run build --prefix src/virtua-agent-app
 docker compose config
 git diff --check
-rg '"kind"|\bKind\b|ModelEndpointKinds|ModelEndpointKind' README.md docs src
+rg '"kind"|\bKind\b|ModelEndpointKinds|ModelEndpointKind' README.md src
 ```
 
 Expected: tests/build/config/diff pass. Only deliberate legacy migration references remain.
 
 - [ ] **Step 3: Run clean Docker end-to-end verification**
 
-On a machine with Docker and a browser:
+On a machine with Docker and a browser, use an isolated Compose project and port so existing `codex_home`, socket, database, and running deployment remain untouched:
 
-1. Back up any existing `codex_home` volume needed by the operator, then start with a clean test volume.
-2. Run `docker compose up -d --build` without CLI login.
-3. Open `/app/settings`, connect through the displayed URL/code, and confirm email and plan.
+```powershell
+$env:VIRTUA_AGENT_PORT = "4001"
+docker compose -p virtua-agent-account-test down -v
+docker compose -p virtua-agent-account-test up -d --build
+```
+
+1. Start the isolated project without CLI login.
+2. Open `http://localhost:4001/app/settings`, connect through the displayed URL/code, and confirm email and plan.
+3. Confirm the isolated project owns a new empty `codex_home` volume; do not inspect, remove, or reuse the normal project's volume.
 4. Confirm Codex model discovery and one non-streaming and one streaming pipeline call.
 5. Restart both containers and confirm the account remains connected.
 6. Sign out in Settings and confirm model discovery reports disconnected.
 7. Use Switch account and complete a second login.
 8. Inspect API logs, captured sidecar test logs, SQLite tables, and orchestration traces for account metadata, codes, URLs, login IDs, and tokens. None may be present.
+9. Remove only the isolated test project and its volumes with `docker compose -p virtua-agent-account-test down -v`, then remove the temporary `VIRTUA_AGENT_PORT` environment variable.
 
 Do not claim Docker acceptance complete if interactive device login was not performed.
 
@@ -478,4 +485,3 @@ git commit -m "docs: explain Codex UI login"
 ```
 
 Stage `docker-compose.yml` or `.gitignore` only if they changed for a verified reason.
-
