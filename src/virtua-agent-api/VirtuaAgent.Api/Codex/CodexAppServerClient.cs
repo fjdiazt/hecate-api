@@ -1,5 +1,3 @@
-using System.Net.Sockets;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using VirtuaAgent.OpenAi;
@@ -12,7 +10,7 @@ public sealed class CodexAppServerClient(IOptions<CodexOptions> options) : ICode
 
     public async Task<IReadOnlyList<CodexModel>> ListModelsAsync(CancellationToken cancellationToken = default)
     {
-        await using var connection = await OpenInitializedAsync(cancellationToken);
+        await using var connection = await OpenAuthenticatedAsync(cancellationToken);
         var models = new List<CodexModel>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         string? cursor = null;
@@ -46,9 +44,10 @@ public sealed class CodexAppServerClient(IOptions<CodexOptions> options) : ICode
         Func<CodexTurnDelta, CancellationToken, Task>? onDelta = null,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await OpenInitializedAsync(cancellationToken);
+        await using var connection = await OpenAuthenticatedAsync(cancellationToken);
         string? threadId = null;
         string? turnId = null;
+        Task<JsonElement>? pendingRead = null;
         try
         {
             var threadResult = CodexAppServerProtocol.Result(await connection.RequestAsync("thread/start", new
@@ -75,7 +74,9 @@ public sealed class CodexAppServerClient(IOptions<CodexOptions> options) : ICode
             int? outputTokens = null;
             while (true)
             {
-                var message = await connection.ReadAsync(cancellationToken);
+                pendingRead = connection.ReadAsync(CancellationToken.None);
+                var message = await pendingRead.WaitAsync(cancellationToken);
+                pendingRead = null;
                 var method = CodexAppServerProtocol.Method(message);
                 if (method is "item/reasoning/summaryTextDelta" or "item/reasoning/textDelta")
                 {
@@ -121,30 +122,24 @@ public sealed class CodexAppServerClient(IOptions<CodexOptions> options) : ICode
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested && threadId is not null && turnId is not null)
         {
-            await InterruptAsync(connection, threadId, turnId);
+            await InterruptAsync(connection, threadId, turnId, pendingRead);
             throw;
         }
     }
 
-    private async Task<CodexConnection> OpenInitializedAsync(CancellationToken cancellationToken)
+    private async Task<CodexAppServerConnection> OpenAuthenticatedAsync(CancellationToken cancellationToken)
     {
-        CodexConnection? connection = null;
+        CodexAppServerConnection? connection = null;
         try
         {
-            connection = await CodexConnection.OpenAsync(_options, cancellationToken);
-            _ = CodexAppServerProtocol.Result(await connection.RequestAsync("initialize", new
-            {
-                clientInfo = new { name = "virtua-agent", title = "Virtua Agent", version = "1" },
-                capabilities = new { experimentalApi = false }
-            }, cancellationToken));
-            await connection.NotifyAsync("initialized", cancellationToken);
+            connection = await CodexAppServerConnection.OpenInitializedAsync(_options, cancellationToken);
             var account = CodexAppServerProtocol.Result(await connection.RequestAsync("account/read", new { refreshToken = true }, cancellationToken));
             if (!account.TryGetProperty("account", out var value) ||
                 value.ValueKind != JsonValueKind.Object ||
                 !value.TryGetProperty("type", out var type) ||
                 type.GetString() != "chatgpt")
             {
-                throw new InvalidOperationException("Codex subscription is not authenticated. Run 'codex login --device-auth' in the Codex sidecar.");
+                throw new InvalidOperationException("Codex subscription is not authenticated. Connect ChatGPT in Settings.");
             }
 
             return connection;
@@ -158,7 +153,11 @@ public sealed class CodexAppServerClient(IOptions<CodexOptions> options) : ICode
         }
     }
 
-    private async Task InterruptAsync(CodexConnection connection, string threadId, string turnId)
+    private async Task InterruptAsync(
+        CodexAppServerConnection connection,
+        string threadId,
+        string turnId,
+        Task<JsonElement>? pendingRead)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(Math.Max(1, _options.InterruptTimeoutSeconds)));
         try
@@ -168,7 +167,10 @@ public sealed class CodexAppServerClient(IOptions<CodexOptions> options) : ICode
             var acknowledged = false;
             while (!interrupted || !acknowledged)
             {
-                var message = await connection.ReadAsync(timeout.Token);
+                var message = pendingRead is null
+                    ? await connection.ReadAsync(timeout.Token)
+                    : await pendingRead.WaitAsync(timeout.Token);
+                pendingRead = null;
                 acknowledged |= CodexAppServerProtocol.ResponseId(message) == requestId;
                 interrupted |= CodexAppServerProtocol.Method(message) == "turn/completed" &&
                     CodexAppServerProtocol.TurnStatus(message) == "interrupted";
@@ -179,77 +181,4 @@ public sealed class CodexAppServerClient(IOptions<CodexOptions> options) : ICode
         }
     }
 
-    private sealed class CodexConnection : IAsyncDisposable
-    {
-        private readonly Socket _socket;
-        private readonly NetworkStream _stream;
-        private readonly StreamReader _reader;
-        private readonly StreamWriter _writer;
-        private int _nextId;
-
-        private CodexConnection(Socket socket)
-        {
-            _socket = socket;
-            _stream = new NetworkStream(socket, ownsSocket: false);
-            _reader = new StreamReader(_stream, Encoding.UTF8, leaveOpen: true);
-            _writer = new StreamWriter(_stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
-        }
-
-        public static async Task<CodexConnection> OpenAsync(CodexOptions options, CancellationToken cancellationToken)
-        {
-            if (!Path.IsPathRooted(options.SocketPath)) throw new InvalidOperationException("Codex socket path must be absolute.");
-            var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, options.ConnectTimeoutSeconds)));
-            try
-            {
-                await socket.ConnectAsync(new UnixDomainSocketEndPoint(options.SocketPath), timeout.Token);
-                return new CodexConnection(socket);
-            }
-            catch
-            {
-                socket.Dispose();
-                throw;
-            }
-        }
-
-        public async Task<JsonElement> RequestAsync(string method, object parameters, CancellationToken cancellationToken)
-        {
-            var id = await WriteRequestAsync(method, parameters, cancellationToken);
-            while (true)
-            {
-                var message = await ReadAsync(cancellationToken);
-                if (CodexAppServerProtocol.ResponseId(message) == id) return message;
-            }
-        }
-
-        public async Task<int> WriteRequestAsync(string method, object parameters, CancellationToken cancellationToken)
-        {
-            var id = ++_nextId;
-            await WriteAsync(new { method, id, @params = parameters }, cancellationToken);
-            return id;
-        }
-
-        public Task NotifyAsync(string method, CancellationToken cancellationToken) =>
-            WriteAsync(new { method }, cancellationToken);
-
-        public async Task<JsonElement> ReadAsync(CancellationToken cancellationToken)
-        {
-            var line = await _reader.ReadLineAsync(cancellationToken);
-            if (line is null) throw new EndOfStreamException();
-            using var document = JsonDocument.Parse(line);
-            return document.RootElement.Clone();
-        }
-
-        private Task WriteAsync(object message, CancellationToken cancellationToken) =>
-            _writer.WriteLineAsync(JsonSerializer.Serialize(message, JsonOptions.Default).AsMemory(), cancellationToken);
-
-        public async ValueTask DisposeAsync()
-        {
-            await _writer.DisposeAsync();
-            _reader.Dispose();
-            await _stream.DisposeAsync();
-            _socket.Dispose();
-        }
-    }
 }
