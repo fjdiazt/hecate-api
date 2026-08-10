@@ -56,6 +56,7 @@ import {
 } from './api';
 import type {
   ModelEndpoint,
+  ModelEndpointKind,
   PipelineSettings,
   PipelineStage,
   PipelineStageInput,
@@ -945,7 +946,12 @@ function ModelsPage() {
 function SettingsPage() {
   const [endpoints, setEndpoints] = useState<ModelEndpoint[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<SaveModelEndpointRequest>({ name: '', base_url: '', api_key: '' });
+  const [draft, setDraft] = useState<SaveModelEndpointRequest>({
+    name: '',
+    kind: 'openai_compatible',
+    base_url: '',
+    api_key: ''
+  });
   const [pipelineSettings, setPipelineSettings] = useState<PipelineSettings | null>(null);
   const [pipelineProtocolDraft, setPipelineProtocolDraft] = useState('');
   const [settingsLoadError, setSettingsLoadError] = useState<string | null>(null);
@@ -967,7 +973,13 @@ function SettingsPage() {
 
   useEffect(() => {
     if (!selected) return;
-    setDraft({ id: selected.id, name: selected.name, base_url: selected.base_url, api_key: '' });
+    setDraft({
+      id: selected.id,
+      name: selected.name,
+      kind: selected.kind,
+      base_url: selected.base_url,
+      api_key: ''
+    });
     setModels([]);
   }, [selected]);
 
@@ -1047,7 +1059,9 @@ function SettingsPage() {
   async function saveEndpoint() {
     try {
       const apiKey = draft.api_key?.trim();
-      const saved = await saveModelEndpoint({ ...draft, api_key: apiKey ? apiKey : undefined });
+      const saved = await saveModelEndpoint(draft.kind === 'codex_subscription'
+        ? { id: draft.id, name: draft.name, kind: draft.kind, base_url: null, api_key: null }
+        : { ...draft, api_key: apiKey ? apiKey : undefined });
       notifications.show({ color: 'green', message: `Saved ${saved.name}` });
       await refresh();
       setSelectedId(saved.id);
@@ -1062,7 +1076,7 @@ function SettingsPage() {
       await deleteModelEndpoint(selectedId);
       notifications.show({ color: 'green', message: 'Endpoint deleted' });
       setSelectedId(null);
-      setDraft({ name: '', base_url: '', api_key: '' });
+      setDraft({ name: '', kind: 'openai_compatible', base_url: '', api_key: '' });
       setModels([]);
       await refresh();
     } catch (error) {
@@ -1074,7 +1088,7 @@ function SettingsPage() {
     <Stack gap="lg">
       <Box>
         <Title order={2}>Settings</Title>
-        <Text c="dimmed">Pipeline protocol and OpenAI-compatible endpoints.</Text>
+        <Text c="dimmed">Pipeline protocol and model endpoints.</Text>
       </Box>
 
       {endpointLoadError && (
@@ -1122,7 +1136,7 @@ function SettingsPage() {
       <Box className="models-grid">
         <Paper withBorder p="sm">
           <Stack gap="sm">
-            <Button fullWidth leftSection={<IconPlus size={16} />} onClick={() => { setSelectedId(null); setDraft({ name: '', base_url: '', api_key: '' }); setModels([]); }}>
+            <Button fullWidth leftSection={<IconPlus size={16} />} onClick={() => { setSelectedId(null); setDraft({ name: '', kind: 'openai_compatible', base_url: '', api_key: '' }); setModels([]); }}>
               New endpoint
             </Button>
             {loadingEndpoints && endpoints.length === 0 && <Loader size="sm" />}
@@ -1131,7 +1145,7 @@ function SettingsPage() {
                 key={endpoint.id}
                 active={endpoint.id === selectedId}
                 label={endpoint.name}
-                description={endpoint.base_url}
+                description={endpoint.kind === 'codex_subscription' ? 'Codex subscription' : endpoint.base_url}
                 leftSection={<IconSettings size={18} />}
                 onClick={() => setSelectedId(endpoint.id)}
               />
@@ -1155,19 +1169,38 @@ function SettingsPage() {
                 value={draft.name}
                 onChange={(event) => setDraft({ ...draft, name: event.currentTarget.value })}
               />
+              <Select
+                label="Kind"
+                data={[
+                  { value: 'openai_compatible', label: 'OpenAI-compatible' },
+                  { value: 'codex_subscription', label: 'Codex subscription' }
+                ]}
+                value={draft.kind}
+                allowDeselect={false}
+                onChange={(value) => setDraft({
+                  ...draft,
+                  kind: value as ModelEndpointKind,
+                  base_url: value === 'codex_subscription' ? null : draft.base_url ?? '',
+                  api_key: value === 'codex_subscription' ? null : draft.api_key ?? ''
+                })}
+              />
+            </Group>
+            {draft.kind === 'openai_compatible' && (
+              <Group grow align="end">
               <TextInput
                 label="Base URL"
                 placeholder="http://localhost:8080"
-                value={draft.base_url}
+                value={draft.base_url ?? ''}
                 onChange={(event) => setDraft({ ...draft, base_url: event.currentTarget.value })}
               />
-            </Group>
-            <TextInput
-              label="API key"
-              placeholder={selected?.has_api_key ? 'Leave blank to keep saved key' : 'Optional'}
-              value={draft.api_key ?? ''}
-              onChange={(event) => setDraft({ ...draft, api_key: event.currentTarget.value })}
-            />
+              <TextInput
+                label="API key"
+                placeholder={selected?.has_api_key ? 'Leave blank to keep saved key' : 'Optional'}
+                value={draft.api_key ?? ''}
+                onChange={(event) => setDraft({ ...draft, api_key: event.currentTarget.value })}
+              />
+              </Group>
+            )}
             <Group justify="space-between">
               <Button
                 variant="light"
