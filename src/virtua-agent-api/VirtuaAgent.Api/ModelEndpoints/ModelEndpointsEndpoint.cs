@@ -21,13 +21,27 @@ public static class ModelEndpointsEndpoint
             return BadRequest("Endpoint name is required.", "name", "endpoint_name_required");
         }
 
-        if (!Uri.TryCreate(request.BaseUrl, UriKind.Absolute, out var baseUri) ||
-            (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps))
+        var kind = string.IsNullOrWhiteSpace(request.Kind)
+            ? ModelEndpointKinds.OpenAiCompatible
+            : request.Kind.Trim().ToLowerInvariant();
+        if (kind is not ModelEndpointKinds.OpenAiCompatible and not ModelEndpointKinds.CodexSubscription)
+        {
+            return BadRequest("Endpoint kind is not supported.", "kind", "invalid_endpoint_kind");
+        }
+
+        if (kind == ModelEndpointKinds.OpenAiCompatible &&
+            (!Uri.TryCreate(request.BaseUrl, UriKind.Absolute, out var baseUri) ||
+             (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps)))
         {
             return BadRequest("Endpoint base_url must be an absolute HTTP URL.", "base_url", "invalid_endpoint_url");
         }
 
-        var saved = await store.SaveAsync(request, cancellationToken);
+        var saved = await store.SaveAsync(request with
+        {
+            Kind = kind,
+            BaseUrl = kind == ModelEndpointKinds.CodexSubscription ? null : request.BaseUrl,
+            ApiKey = kind == ModelEndpointKinds.CodexSubscription ? null : request.ApiKey
+        }, cancellationToken);
         return Results.Json(saved.ToDto(), JsonOptions.Default);
     }
 

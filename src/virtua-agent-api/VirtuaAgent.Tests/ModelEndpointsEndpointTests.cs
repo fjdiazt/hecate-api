@@ -13,6 +13,54 @@ namespace VirtuaAgent.Tests;
 public sealed class ModelEndpointsEndpointTests
 {
     [Fact]
+    public async Task SaveCodexSubscriptionEndpointNeedsNoUrlOrKey()
+    {
+        await using var factory = FactoryWith(new InMemoryModelEndpointStore());
+        var response = await factory.CreateClient().PostAsJsonAsync("/v1/model-endpoints", new SaveModelEndpointRequest
+        {
+            Id = "codex-subscription",
+            Name = "ChatGPT Codex",
+            Kind = ModelEndpointKinds.CodexSubscription
+        }, JsonOptions.Default);
+        var body = await response.Content.ReadFromJsonAsync<ModelEndpointDto>(JsonOptions.Default);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(ModelEndpointKinds.CodexSubscription, body!.Kind);
+        Assert.Null(body.BaseUrl);
+        Assert.False(body.HasApiKey);
+    }
+
+    [Fact]
+    public async Task MissingKindDefaultsToOpenAiCompatible()
+    {
+        await using var factory = FactoryWith(new InMemoryModelEndpointStore());
+        var response = await factory.CreateClient().PostAsJsonAsync("/v1/model-endpoints", new
+        {
+            name = "llama.cpp",
+            base_url = "http://localhost:8080"
+        });
+        var body = await response.Content.ReadFromJsonAsync<ModelEndpointDto>(JsonOptions.Default);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(ModelEndpointKinds.OpenAiCompatible, body!.Kind);
+    }
+
+    [Fact]
+    public async Task UnknownKindIsRejected()
+    {
+        await using var factory = FactoryWith(new InMemoryModelEndpointStore());
+        var response = await factory.CreateClient().PostAsJsonAsync("/v1/model-endpoints", new
+        {
+            name = "Unknown",
+            kind = "unknown"
+        });
+        var text = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("invalid_endpoint_kind", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SaveAndListEndpointDoesNotReturnApiKey()
     {
         await using var factory = new WebApplicationFactory<Program>()
@@ -101,6 +149,17 @@ public sealed class ModelEndpointsEndpointTests
             throw new NotSupportedException();
     }
 
+    private static WebApplicationFactory<Program> FactoryWith(IModelEndpointStore store) =>
+        new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.ConfigureTestServices(services =>
+                {
+                    services.RemoveAll<IModelEndpointStore>();
+                    services.AddSingleton(store);
+                });
+            });
+
     private sealed class InMemoryModelEndpointStore : IModelEndpointStore
     {
         private readonly Dictionary<string, ModelEndpointDefinition> _endpoints = new(StringComparer.OrdinalIgnoreCase);
@@ -117,8 +176,9 @@ public sealed class ModelEndpointsEndpointTests
             {
                 Id = request.Id ?? "endpoint_test",
                 Name = request.Name,
-                BaseUrl = request.BaseUrl,
-                ApiKey = request.ApiKey,
+                Kind = string.IsNullOrWhiteSpace(request.Kind) ? ModelEndpointKinds.OpenAiCompatible : request.Kind,
+                BaseUrl = request.Kind == ModelEndpointKinds.CodexSubscription ? "" : request.BaseUrl ?? "",
+                ApiKey = request.Kind == ModelEndpointKinds.CodexSubscription ? null : request.ApiKey,
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow
             };

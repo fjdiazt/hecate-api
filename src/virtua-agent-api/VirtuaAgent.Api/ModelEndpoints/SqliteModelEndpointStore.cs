@@ -26,6 +26,7 @@ public sealed class SqliteModelEndpointStore : IModelEndpointStore, IAsyncDispos
             CREATE TABLE IF NOT EXISTS model_endpoints (
               id TEXT PRIMARY KEY,
               name TEXT NOT NULL,
+              kind TEXT NOT NULL DEFAULT 'openai_compatible',
               base_url TEXT NOT NULL,
               api_key TEXT NULL,
               created_at TEXT NOT NULL,
@@ -33,6 +34,24 @@ public sealed class SqliteModelEndpointStore : IModelEndpointStore, IAsyncDispos
             );
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
+
+        await using var columnsCommand = connection.CreateCommand();
+        columnsCommand.CommandText = "PRAGMA table_info(model_endpoints);";
+        var hasKind = false;
+        await using (var reader = await columnsCommand.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                hasKind |= string.Equals(reader.GetString(1), "kind", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        if (!hasKind)
+        {
+            await using var migration = connection.CreateCommand();
+            migration.CommandText = "ALTER TABLE model_endpoints ADD COLUMN kind TEXT NOT NULL DEFAULT 'openai_compatible';";
+            await migration.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     public async Task<IReadOnlyList<ModelEndpointDefinition>> ListAsync(CancellationToken cancellationToken = default)
@@ -41,7 +60,7 @@ public sealed class SqliteModelEndpointStore : IModelEndpointStore, IAsyncDispos
         await using var cleanup = ConnectionCleanup.Create(connection, _sharedConnection is null);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, name, base_url, api_key, created_at, updated_at
+            SELECT id, name, kind, base_url, api_key, created_at, updated_at
             FROM model_endpoints
             ORDER BY name ASC, id ASC;
             """;
@@ -62,7 +81,7 @@ public sealed class SqliteModelEndpointStore : IModelEndpointStore, IAsyncDispos
         await using var cleanup = ConnectionCleanup.Create(connection, _sharedConnection is null);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, name, base_url, api_key, created_at, updated_at
+            SELECT id, name, kind, base_url, api_key, created_at, updated_at
             FROM model_endpoints
             WHERE id = $id;
             """;
@@ -75,25 +94,33 @@ public sealed class SqliteModelEndpointStore : IModelEndpointStore, IAsyncDispos
     {
         var id = string.IsNullOrWhiteSpace(request.Id) ? "endpoint_" + Guid.NewGuid().ToString("N") : request.Id.Trim();
         var name = request.Name.Trim();
-        var baseUrl = request.BaseUrl.Trim().TrimEnd('/');
+        var kind = string.IsNullOrWhiteSpace(request.Kind)
+            ? ModelEndpointKinds.OpenAiCompatible
+            : request.Kind.Trim().ToLowerInvariant();
+        var isCodex = kind == ModelEndpointKinds.CodexSubscription;
+        var baseUrl = isCodex ? "" : (request.BaseUrl ?? "").Trim().TrimEnd('/');
         var now = DateTimeOffset.UtcNow;
         var existing = await GetAsync(id, cancellationToken);
-        var apiKey = request.ApiKey is null ? existing?.ApiKey : NormalizeSecret(request.ApiKey);
+        var apiKey = isCodex
+            ? null
+            : request.ApiKey is null ? existing?.ApiKey : NormalizeSecret(request.ApiKey);
 
         var connection = await OpenConnectionAsync(cancellationToken);
         await using var cleanup = ConnectionCleanup.Create(connection, _sharedConnection is null);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO model_endpoints (id, name, base_url, api_key, created_at, updated_at)
-            VALUES ($id, $name, $base_url, $api_key, $now, $now)
+            INSERT INTO model_endpoints (id, name, kind, base_url, api_key, created_at, updated_at)
+            VALUES ($id, $name, $kind, $base_url, $api_key, $now, $now)
             ON CONFLICT(id) DO UPDATE SET
               name = excluded.name,
+              kind = excluded.kind,
               base_url = excluded.base_url,
               api_key = excluded.api_key,
               updated_at = excluded.updated_at;
             """;
         Add(command, "$id", id);
         Add(command, "$name", name);
+        Add(command, "$kind", kind);
         Add(command, "$base_url", baseUrl);
         Add(command, "$api_key", apiKey);
         Add(command, "$now", now.ToString("O"));
@@ -124,10 +151,11 @@ public sealed class SqliteModelEndpointStore : IModelEndpointStore, IAsyncDispos
     {
         Id = reader.GetString(0),
         Name = reader.GetString(1),
-        BaseUrl = reader.GetString(2),
-        ApiKey = reader.IsDBNull(3) ? null : reader.GetString(3),
-        CreatedAt = DateTimeOffset.Parse(reader.GetString(4)),
-        UpdatedAt = DateTimeOffset.Parse(reader.GetString(5))
+        Kind = reader.GetString(2),
+        BaseUrl = reader.GetString(3),
+        ApiKey = reader.IsDBNull(4) ? null : reader.GetString(4),
+        CreatedAt = DateTimeOffset.Parse(reader.GetString(5)),
+        UpdatedAt = DateTimeOffset.Parse(reader.GetString(6))
     };
 
     private async Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken)
