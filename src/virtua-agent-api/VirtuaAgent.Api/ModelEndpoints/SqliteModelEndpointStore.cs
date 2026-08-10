@@ -21,12 +21,14 @@ public sealed class SqliteModelEndpointStore : IModelEndpointStore, IAsyncDispos
     {
         var connection = await OpenConnectionAsync(cancellationToken);
         await using var cleanup = ConnectionCleanup.Create(connection, _sharedConnection is null);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             CREATE TABLE IF NOT EXISTS model_endpoints (
               id TEXT PRIMARY KEY,
               name TEXT NOT NULL,
-              kind TEXT NOT NULL DEFAULT 'openai_compatible',
+              type TEXT NOT NULL DEFAULT 'openai_compatible',
               base_url TEXT NOT NULL,
               api_key TEXT NULL,
               created_at TEXT NOT NULL,
@@ -36,22 +38,35 @@ public sealed class SqliteModelEndpointStore : IModelEndpointStore, IAsyncDispos
         await command.ExecuteNonQueryAsync(cancellationToken);
 
         await using var columnsCommand = connection.CreateCommand();
+        columnsCommand.Transaction = transaction;
         columnsCommand.CommandText = "PRAGMA table_info(model_endpoints);";
         var hasKind = false;
+        var hasType = false;
         await using (var reader = await columnsCommand.ExecuteReaderAsync(cancellationToken))
         {
             while (await reader.ReadAsync(cancellationToken))
             {
                 hasKind |= string.Equals(reader.GetString(1), "kind", StringComparison.OrdinalIgnoreCase);
+                hasType |= string.Equals(reader.GetString(1), "type", StringComparison.OrdinalIgnoreCase);
             }
         }
 
-        if (!hasKind)
+        if (hasKind && !hasType)
         {
             await using var migration = connection.CreateCommand();
-            migration.CommandText = "ALTER TABLE model_endpoints ADD COLUMN kind TEXT NOT NULL DEFAULT 'openai_compatible';";
+            migration.Transaction = transaction;
+            migration.CommandText = "ALTER TABLE model_endpoints RENAME COLUMN kind TO type;";
             await migration.ExecuteNonQueryAsync(cancellationToken);
         }
+        else if (!hasType)
+        {
+            await using var migration = connection.CreateCommand();
+            migration.Transaction = transaction;
+            migration.CommandText = "ALTER TABLE model_endpoints ADD COLUMN type TEXT NOT NULL DEFAULT 'openai_compatible';";
+            await migration.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<ModelEndpointDefinition>> ListAsync(CancellationToken cancellationToken = default)
@@ -60,7 +75,7 @@ public sealed class SqliteModelEndpointStore : IModelEndpointStore, IAsyncDispos
         await using var cleanup = ConnectionCleanup.Create(connection, _sharedConnection is null);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, name, kind, base_url, api_key, created_at, updated_at
+            SELECT id, name, type, base_url, api_key, created_at, updated_at
             FROM model_endpoints
             ORDER BY name ASC, id ASC;
             """;
@@ -81,7 +96,7 @@ public sealed class SqliteModelEndpointStore : IModelEndpointStore, IAsyncDispos
         await using var cleanup = ConnectionCleanup.Create(connection, _sharedConnection is null);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, name, kind, base_url, api_key, created_at, updated_at
+            SELECT id, name, type, base_url, api_key, created_at, updated_at
             FROM model_endpoints
             WHERE id = $id;
             """;
@@ -94,10 +109,10 @@ public sealed class SqliteModelEndpointStore : IModelEndpointStore, IAsyncDispos
     {
         var id = string.IsNullOrWhiteSpace(request.Id) ? "endpoint_" + Guid.NewGuid().ToString("N") : request.Id.Trim();
         var name = request.Name.Trim();
-        var kind = string.IsNullOrWhiteSpace(request.Kind)
-            ? ModelEndpointKinds.OpenAiCompatible
-            : request.Kind.Trim().ToLowerInvariant();
-        var isCodex = kind == ModelEndpointKinds.CodexSubscription;
+        var type = string.IsNullOrWhiteSpace(request.Type)
+            ? ModelEndpointTypes.OpenAiCompatible
+            : request.Type.Trim().ToLowerInvariant();
+        var isCodex = type == ModelEndpointTypes.CodexSubscription;
         var baseUrl = isCodex ? "" : (request.BaseUrl ?? "").Trim().TrimEnd('/');
         var now = DateTimeOffset.UtcNow;
         var existing = await GetAsync(id, cancellationToken);
@@ -109,18 +124,18 @@ public sealed class SqliteModelEndpointStore : IModelEndpointStore, IAsyncDispos
         await using var cleanup = ConnectionCleanup.Create(connection, _sharedConnection is null);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO model_endpoints (id, name, kind, base_url, api_key, created_at, updated_at)
-            VALUES ($id, $name, $kind, $base_url, $api_key, $now, $now)
+            INSERT INTO model_endpoints (id, name, type, base_url, api_key, created_at, updated_at)
+            VALUES ($id, $name, $type, $base_url, $api_key, $now, $now)
             ON CONFLICT(id) DO UPDATE SET
               name = excluded.name,
-              kind = excluded.kind,
+              type = excluded.type,
               base_url = excluded.base_url,
               api_key = excluded.api_key,
               updated_at = excluded.updated_at;
             """;
         Add(command, "$id", id);
         Add(command, "$name", name);
-        Add(command, "$kind", kind);
+        Add(command, "$type", type);
         Add(command, "$base_url", baseUrl);
         Add(command, "$api_key", apiKey);
         Add(command, "$now", now.ToString("O"));
@@ -151,7 +166,7 @@ public sealed class SqliteModelEndpointStore : IModelEndpointStore, IAsyncDispos
     {
         Id = reader.GetString(0),
         Name = reader.GetString(1),
-        Kind = reader.GetString(2),
+        Type = reader.GetString(2),
         BaseUrl = reader.GetString(3),
         ApiKey = reader.IsDBNull(4) ? null : reader.GetString(4),
         CreatedAt = DateTimeOffset.Parse(reader.GetString(5)),

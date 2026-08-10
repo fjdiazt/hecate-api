@@ -395,7 +395,7 @@ public sealed class PipelineExecutor(
 
     private static void ValidateCodexRequest(ChatCompletionRequest request, ModelEndpointDefinition? endpoint)
     {
-        if (endpoint?.Kind != ModelEndpointKinds.CodexSubscription) return;
+        if (endpoint?.Type != ModelEndpointTypes.CodexSubscription) return;
 
         var unsupported = request.Temperature is not null ? "temperature"
             : request.TopP is not null ? "top_p"

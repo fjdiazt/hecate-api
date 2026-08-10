@@ -52,7 +52,7 @@ public static class ChatCompletionsEndpoint
             if (request.Orchestration?.Pipeline is null)
             {
                 endpoint = await ResolveEndpointAsync(request.EndpointId, modelEndpointStore, cancellationToken);
-                if (endpoint?.Kind == ModelEndpointKinds.CodexSubscription)
+                if (endpoint?.Type == ModelEndpointTypes.CodexSubscription)
                 {
                     throw new PipelineValidationException(
                         "Codex subscription endpoints can only be used by Virtua Agent pipeline stages.",

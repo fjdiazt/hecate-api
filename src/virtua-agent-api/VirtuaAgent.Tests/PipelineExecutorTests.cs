@@ -675,7 +675,7 @@ public sealed class PipelineExecutorTests
         {
             Id = "codex",
             Name = "Codex",
-            Kind = ModelEndpointKinds.CodexSubscription
+            Type = ModelEndpointTypes.CodexSubscription
         });
         var executor = CreateExecutor(upstream, endpointStore: endpointStore, codex: codex);
         var request = new ChatCompletionRequest
@@ -713,7 +713,7 @@ public sealed class PipelineExecutorTests
         var endpointStore = new FakeModelEndpointStore(new ModelEndpointDefinition
         {
             Id = "codex",
-            Kind = ModelEndpointKinds.CodexSubscription
+            Type = ModelEndpointTypes.CodexSubscription
         });
         var executor = CreateExecutor(upstream, endpointStore: endpointStore, codex: codex);
         var request = new ChatCompletionRequest
@@ -751,7 +751,7 @@ public sealed class PipelineExecutorTests
         var endpointStore = new FakeModelEndpointStore(new ModelEndpointDefinition
         {
             Id = "codex",
-            Kind = ModelEndpointKinds.CodexSubscription
+            Type = ModelEndpointTypes.CodexSubscription
         });
         var executor = CreateExecutor(new RecordingUpstreamClient("unused"), endpointStore: endpointStore, codex: codex);
         var request = new ChatCompletionRequest

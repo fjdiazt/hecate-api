@@ -11,10 +11,10 @@ public sealed class ModelEndpointDispatcher(
     public Task<ModelListResponse> ListModelsAsync(
         ModelEndpointDefinition endpoint,
         CancellationToken cancellationToken = default) =>
-        endpoint.Kind switch
+        endpoint.Type switch
         {
-            ModelEndpointKinds.OpenAiCompatible => upstream.ListModelsAsync(endpoint, cancellationToken),
-            ModelEndpointKinds.CodexSubscription => codex.ListModelsAsync(cancellationToken),
+            ModelEndpointTypes.OpenAiCompatible => upstream.ListModelsAsync(endpoint, cancellationToken),
+            ModelEndpointTypes.CodexSubscription => codex.ListModelsAsync(cancellationToken),
             _ => throw Unsupported(endpoint)
         };
 
@@ -22,10 +22,10 @@ public sealed class ModelEndpointDispatcher(
         ChatCompletionRequest request,
         ModelEndpointDefinition endpoint,
         CancellationToken cancellationToken = default) =>
-        endpoint.Kind switch
+        endpoint.Type switch
         {
-            ModelEndpointKinds.OpenAiCompatible => upstream.ChatAsync(request, endpoint, cancellationToken),
-            ModelEndpointKinds.CodexSubscription => codex.ChatAsync(request, cancellationToken),
+            ModelEndpointTypes.OpenAiCompatible => upstream.ChatAsync(request, endpoint, cancellationToken),
+            ModelEndpointTypes.CodexSubscription => codex.ChatAsync(request, cancellationToken),
             _ => throw Unsupported(endpoint)
         };
 
@@ -34,13 +34,13 @@ public sealed class ModelEndpointDispatcher(
         ModelEndpointDefinition endpoint,
         Func<string, CancellationToken, Task> onDataAsync,
         CancellationToken cancellationToken = default) =>
-        endpoint.Kind switch
+        endpoint.Type switch
         {
-            ModelEndpointKinds.OpenAiCompatible => upstream.StreamChatAsync(request, endpoint, onDataAsync, cancellationToken),
-            ModelEndpointKinds.CodexSubscription => codex.StreamChatAsync(request, onDataAsync, cancellationToken),
+            ModelEndpointTypes.OpenAiCompatible => upstream.StreamChatAsync(request, endpoint, onDataAsync, cancellationToken),
+            ModelEndpointTypes.CodexSubscription => codex.StreamChatAsync(request, onDataAsync, cancellationToken),
             _ => throw Unsupported(endpoint)
         };
 
     private static InvalidOperationException Unsupported(ModelEndpointDefinition endpoint) =>
-        new($"Unsupported endpoint kind '{endpoint.Kind}'.");
+        new($"Unsupported endpoint type '{endpoint.Type}'.");
 }

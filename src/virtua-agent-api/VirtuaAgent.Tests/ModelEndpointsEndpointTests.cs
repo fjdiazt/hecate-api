@@ -20,18 +20,21 @@ public sealed class ModelEndpointsEndpointTests
         {
             Id = "codex-subscription",
             Name = "ChatGPT Codex",
-            Kind = ModelEndpointKinds.CodexSubscription
+            Type = ModelEndpointTypes.CodexSubscription
         }, JsonOptions.Default);
         var body = await response.Content.ReadFromJsonAsync<ModelEndpointDto>(JsonOptions.Default);
+        var json = await response.Content.ReadAsStringAsync();
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(ModelEndpointKinds.CodexSubscription, body!.Kind);
+        Assert.Equal(ModelEndpointTypes.CodexSubscription, body!.Type);
+        Assert.Contains("\"type\"", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"kind\"", json, StringComparison.Ordinal);
         Assert.Null(body.BaseUrl);
         Assert.False(body.HasApiKey);
     }
 
     [Fact]
-    public async Task MissingKindDefaultsToOpenAiCompatible()
+    public async Task MissingTypeDefaultsToOpenAiCompatible()
     {
         await using var factory = FactoryWith(new InMemoryModelEndpointStore());
         var response = await factory.CreateClient().PostAsJsonAsync("/v1/model-endpoints", new
@@ -42,22 +45,22 @@ public sealed class ModelEndpointsEndpointTests
         var body = await response.Content.ReadFromJsonAsync<ModelEndpointDto>(JsonOptions.Default);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(ModelEndpointKinds.OpenAiCompatible, body!.Kind);
+        Assert.Equal(ModelEndpointTypes.OpenAiCompatible, body!.Type);
     }
 
     [Fact]
-    public async Task UnknownKindIsRejected()
+    public async Task UnknownTypeIsRejected()
     {
         await using var factory = FactoryWith(new InMemoryModelEndpointStore());
         var response = await factory.CreateClient().PostAsJsonAsync("/v1/model-endpoints", new
         {
             name = "Unknown",
-            kind = "unknown"
+            type = "unknown"
         });
         var text = await response.Content.ReadAsStringAsync();
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Contains("invalid_endpoint_kind", text, StringComparison.Ordinal);
+        Assert.Contains("invalid_endpoint_type", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -176,9 +179,9 @@ public sealed class ModelEndpointsEndpointTests
             {
                 Id = request.Id ?? "endpoint_test",
                 Name = request.Name,
-                Kind = string.IsNullOrWhiteSpace(request.Kind) ? ModelEndpointKinds.OpenAiCompatible : request.Kind,
-                BaseUrl = request.Kind == ModelEndpointKinds.CodexSubscription ? "" : request.BaseUrl ?? "",
-                ApiKey = request.Kind == ModelEndpointKinds.CodexSubscription ? null : request.ApiKey,
+                Type = string.IsNullOrWhiteSpace(request.Type) ? ModelEndpointTypes.OpenAiCompatible : request.Type,
+                BaseUrl = request.Type == ModelEndpointTypes.CodexSubscription ? "" : request.BaseUrl ?? "",
+                ApiKey = request.Type == ModelEndpointTypes.CodexSubscription ? null : request.ApiKey,
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow
             };

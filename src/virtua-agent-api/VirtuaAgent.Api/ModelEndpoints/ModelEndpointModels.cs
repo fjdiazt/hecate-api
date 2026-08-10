@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace VirtuaAgent.ModelEndpoints;
 
-public static class ModelEndpointKinds
+public static class ModelEndpointTypes
 {
     public const string OpenAiCompatible = "openai_compatible";
     public const string CodexSubscription = "codex_subscription";
@@ -12,7 +12,7 @@ public sealed record ModelEndpointDefinition
 {
     public string Id { get; init; } = "";
     public string Name { get; init; } = "";
-    public string Kind { get; init; } = ModelEndpointKinds.OpenAiCompatible;
+    public string Type { get; init; } = ModelEndpointTypes.OpenAiCompatible;
     public string BaseUrl { get; init; } = "";
     public string? ApiKey { get; init; }
     public DateTimeOffset CreatedAt { get; init; }
@@ -23,7 +23,7 @@ public sealed record ModelEndpointDto
 {
     public string Id { get; init; } = "";
     public string Name { get; init; } = "";
-    public string Kind { get; init; } = ModelEndpointKinds.OpenAiCompatible;
+    public string Type { get; init; } = ModelEndpointTypes.OpenAiCompatible;
 
     [JsonPropertyName("base_url")]
     public string? BaseUrl { get; init; }
@@ -36,7 +36,7 @@ public sealed record SaveModelEndpointRequest
 {
     public string? Id { get; init; }
     public string Name { get; init; } = "";
-    public string? Kind { get; init; }
+    public string? Type { get; init; }
 
     [JsonPropertyName("base_url")]
     public string? BaseUrl { get; init; }
@@ -51,8 +51,8 @@ public static class ModelEndpointMapping
     {
         Id = endpoint.Id,
         Name = endpoint.Name,
-        Kind = endpoint.Kind,
-        BaseUrl = endpoint.Kind == ModelEndpointKinds.CodexSubscription ? null : endpoint.BaseUrl,
+        Type = endpoint.Type,
+        BaseUrl = endpoint.Type == ModelEndpointTypes.CodexSubscription ? null : endpoint.BaseUrl,
         HasApiKey = !string.IsNullOrWhiteSpace(endpoint.ApiKey)
     };
 }

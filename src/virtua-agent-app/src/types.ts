@@ -12,17 +12,17 @@ export type ModelListResponse = {
 export type ModelEndpoint = {
   id: string;
   name: string;
-  kind: ModelEndpointKind;
+  type: ModelEndpointType;
   base_url: string | null;
   has_api_key: boolean;
 };
 
-export type ModelEndpointKind = 'openai_compatible' | 'codex_subscription';
+export type ModelEndpointType = 'openai_compatible' | 'codex_subscription';
 
 export type SaveModelEndpointRequest = {
   id?: string | null;
   name: string;
-  kind: ModelEndpointKind;
+  type: ModelEndpointType;
   base_url?: string | null;
   api_key?: string | null;
 };

@@ -21,15 +21,15 @@ public static class ModelEndpointsEndpoint
             return BadRequest("Endpoint name is required.", "name", "endpoint_name_required");
         }
 
-        var kind = string.IsNullOrWhiteSpace(request.Kind)
-            ? ModelEndpointKinds.OpenAiCompatible
-            : request.Kind.Trim().ToLowerInvariant();
-        if (kind is not ModelEndpointKinds.OpenAiCompatible and not ModelEndpointKinds.CodexSubscription)
+        var type = string.IsNullOrWhiteSpace(request.Type)
+            ? ModelEndpointTypes.OpenAiCompatible
+            : request.Type.Trim().ToLowerInvariant();
+        if (type is not ModelEndpointTypes.OpenAiCompatible and not ModelEndpointTypes.CodexSubscription)
         {
-            return BadRequest("Endpoint kind is not supported.", "kind", "invalid_endpoint_kind");
+            return BadRequest("Endpoint type is not supported.", "type", "invalid_endpoint_type");
         }
 
-        if (kind == ModelEndpointKinds.OpenAiCompatible &&
+        if (type == ModelEndpointTypes.OpenAiCompatible &&
             (!Uri.TryCreate(request.BaseUrl, UriKind.Absolute, out var baseUri) ||
              (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps)))
         {
@@ -38,9 +38,9 @@ public static class ModelEndpointsEndpoint
 
         var saved = await store.SaveAsync(request with
         {
-            Kind = kind,
-            BaseUrl = kind == ModelEndpointKinds.CodexSubscription ? null : request.BaseUrl,
-            ApiKey = kind == ModelEndpointKinds.CodexSubscription ? null : request.ApiKey
+            Type = type,
+            BaseUrl = type == ModelEndpointTypes.CodexSubscription ? null : request.BaseUrl,
+            ApiKey = type == ModelEndpointTypes.CodexSubscription ? null : request.ApiKey
         }, cancellationToken);
         return Results.Json(saved.ToDto(), JsonOptions.Default);
     }

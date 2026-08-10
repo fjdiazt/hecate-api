@@ -16,7 +16,7 @@ public sealed class ModelEndpointDispatcherTests
         var endpoint = new ModelEndpointDefinition
         {
             Id = "llama",
-            Kind = ModelEndpointKinds.OpenAiCompatible,
+            Type = ModelEndpointTypes.OpenAiCompatible,
             BaseUrl = "http://llama.test"
         };
 
@@ -35,7 +35,7 @@ public sealed class ModelEndpointDispatcherTests
         var endpoint = new ModelEndpointDefinition
         {
             Id = "codex",
-            Kind = ModelEndpointKinds.CodexSubscription
+            Type = ModelEndpointTypes.CodexSubscription
         };
 
         var response = await dispatcher.ChatAsync(Request(), endpoint);
@@ -55,7 +55,7 @@ public sealed class ModelEndpointDispatcherTests
         var response = await dispatcher.ListModelsAsync(new ModelEndpointDefinition
         {
             Id = "codex",
-            Kind = ModelEndpointKinds.CodexSubscription
+            Type = ModelEndpointTypes.CodexSubscription
         });
 
         Assert.Equal("model", Assert.Single(response.Data).Id);

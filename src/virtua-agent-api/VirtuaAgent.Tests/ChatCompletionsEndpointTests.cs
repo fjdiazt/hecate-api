@@ -96,7 +96,7 @@ public sealed class ChatCompletionsEndpointTests
                         {
                             Id = "codex",
                             Name = "Codex",
-                            Kind = ModelEndpointKinds.CodexSubscription
+                            Type = ModelEndpointTypes.CodexSubscription
                         }));
                 });
             });

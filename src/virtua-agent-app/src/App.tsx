@@ -56,7 +56,7 @@ import {
 } from './api';
 import type {
   ModelEndpoint,
-  ModelEndpointKind,
+  ModelEndpointType,
   PipelineSettings,
   PipelineStage,
   PipelineStageInput,
@@ -948,7 +948,7 @@ function SettingsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SaveModelEndpointRequest>({
     name: '',
-    kind: 'openai_compatible',
+    type: 'openai_compatible',
     base_url: '',
     api_key: ''
   });
@@ -976,7 +976,7 @@ function SettingsPage() {
     setDraft({
       id: selected.id,
       name: selected.name,
-      kind: selected.kind,
+      type: selected.type,
       base_url: selected.base_url,
       api_key: ''
     });
@@ -1059,8 +1059,8 @@ function SettingsPage() {
   async function saveEndpoint() {
     try {
       const apiKey = draft.api_key?.trim();
-      const saved = await saveModelEndpoint(draft.kind === 'codex_subscription'
-        ? { id: draft.id, name: draft.name, kind: draft.kind, base_url: null, api_key: null }
+      const saved = await saveModelEndpoint(draft.type === 'codex_subscription'
+        ? { id: draft.id, name: draft.name, type: draft.type, base_url: null, api_key: null }
         : { ...draft, api_key: apiKey ? apiKey : undefined });
       notifications.show({ color: 'green', message: `Saved ${saved.name}` });
       await refresh();
@@ -1076,7 +1076,7 @@ function SettingsPage() {
       await deleteModelEndpoint(selectedId);
       notifications.show({ color: 'green', message: 'Endpoint deleted' });
       setSelectedId(null);
-      setDraft({ name: '', kind: 'openai_compatible', base_url: '', api_key: '' });
+      setDraft({ name: '', type: 'openai_compatible', base_url: '', api_key: '' });
       setModels([]);
       await refresh();
     } catch (error) {
@@ -1136,7 +1136,7 @@ function SettingsPage() {
       <Box className="models-grid">
         <Paper withBorder p="sm">
           <Stack gap="sm">
-            <Button fullWidth leftSection={<IconPlus size={16} />} onClick={() => { setSelectedId(null); setDraft({ name: '', kind: 'openai_compatible', base_url: '', api_key: '' }); setModels([]); }}>
+            <Button fullWidth leftSection={<IconPlus size={16} />} onClick={() => { setSelectedId(null); setDraft({ name: '', type: 'openai_compatible', base_url: '', api_key: '' }); setModels([]); }}>
               New endpoint
             </Button>
             {loadingEndpoints && endpoints.length === 0 && <Loader size="sm" />}
@@ -1145,7 +1145,7 @@ function SettingsPage() {
                 key={endpoint.id}
                 active={endpoint.id === selectedId}
                 label={endpoint.name}
-                description={endpoint.kind === 'codex_subscription' ? 'Codex subscription' : endpoint.base_url}
+                description={endpoint.type === 'codex_subscription' ? 'Codex subscription' : endpoint.base_url}
                 leftSection={<IconSettings size={18} />}
                 onClick={() => setSelectedId(endpoint.id)}
               />
@@ -1170,22 +1170,22 @@ function SettingsPage() {
                 onChange={(event) => setDraft({ ...draft, name: event.currentTarget.value })}
               />
               <Select
-                label="Kind"
+                label="Type"
                 data={[
                   { value: 'openai_compatible', label: 'OpenAI-compatible' },
                   { value: 'codex_subscription', label: 'Codex subscription' }
                 ]}
-                value={draft.kind}
+                value={draft.type}
                 allowDeselect={false}
                 onChange={(value) => setDraft({
                   ...draft,
-                  kind: value as ModelEndpointKind,
+                  type: value as ModelEndpointType,
                   base_url: value === 'codex_subscription' ? null : draft.base_url ?? '',
                   api_key: value === 'codex_subscription' ? null : draft.api_key ?? ''
                 })}
               />
             </Box>
-            {draft.kind === 'openai_compatible' && (
+            {draft.type === 'openai_compatible' && (
               <Box className="endpoint-fields">
               <TextInput
                 label="Base URL"
