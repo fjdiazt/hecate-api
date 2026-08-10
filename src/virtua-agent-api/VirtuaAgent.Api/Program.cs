@@ -1,4 +1,5 @@
 using VirtuaAgent.Endpoints;
+using VirtuaAgent.Codex;
 using VirtuaAgent.ModelEndpoints;
 using VirtuaAgent.PipelineModels;
 using VirtuaAgent.OpenAi;
@@ -17,6 +18,7 @@ builder.Services.AddSwaggerGen(options =>
     options.SchemaFilter<ChatMessageContentSchemaFilter>();
 });
 builder.Services.Configure<UpstreamOptions>(builder.Configuration.GetSection("Upstream"));
+builder.Services.Configure<CodexOptions>(builder.Configuration.GetSection("Codex"));
 builder.Services.AddSingleton<ActiveTraceHub>();
 builder.Services.AddSingleton<PipelineExecutor>();
 builder.Services.AddSingleton<IPipelineModelStore>(_ =>
@@ -61,6 +63,9 @@ builder.Services.AddHttpClient<IOpenAiCompatibleUpstreamClient, OpenAiCompatible
     client.BaseAddress = new Uri(options.BaseUrl);
     client.Timeout = TimeSpan.FromSeconds(Math.Max(1, options.RequestTimeoutSeconds));
 });
+builder.Services.AddSingleton<ICodexAppServerClient, CodexAppServerClient>();
+builder.Services.AddSingleton<CodexSubscriptionClient>();
+builder.Services.AddSingleton<ModelEndpointDispatcher>();
 
 var storageConnectionString = builder.Configuration.GetValue<string>("TraceStore:ConnectionString")
     ?? "Data Source=virtua-agent.db";

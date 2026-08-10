@@ -1,4 +1,5 @@
 using System.Text.Json;
+using VirtuaAgent.Codex;
 using VirtuaAgent.OpenAi;
 using VirtuaAgent.ModelEndpoints;
 using VirtuaAgent.Orchestration;
@@ -637,7 +638,7 @@ public sealed class PipelineExecutorTests
             Name = "llama.cpp",
             BaseUrl = "http://llama.test"
         });
-        var executor = new PipelineExecutor(upstream, endpointStore, new FakePipelineSettingsStore(), new NoopTraceStore(), new ActiveTraceHub());
+        var executor = CreateExecutor(upstream, endpointStore: endpointStore);
         var request = new ChatCompletionRequest
         {
             Model = "virtua-agent/editor",
@@ -663,6 +664,84 @@ public sealed class PipelineExecutorTests
 
         Assert.Equal("llamacpp", upstream.EndpointIds.Single());
         Assert.Null(upstream.Requests[0].EndpointId);
+    }
+
+    [Fact]
+    public async Task StageWithCodexEndpointUsesCodexClient()
+    {
+        var upstream = new RecordingUpstreamClient("unused");
+        var codex = new FakeCodexAppServerClient();
+        var endpointStore = new FakeModelEndpointStore(new ModelEndpointDefinition
+        {
+            Id = "codex",
+            Name = "Codex",
+            Kind = ModelEndpointKinds.CodexSubscription
+        });
+        var executor = CreateExecutor(upstream, endpointStore: endpointStore, codex: codex);
+        var request = new ChatCompletionRequest
+        {
+            Model = "virtua-agent/editor",
+            Messages = [new ChatMessageDto { Role = "user", Content = "write answer" }],
+            Orchestration = new OrchestrationRequestDto
+            {
+                Pipeline = new PipelineRequestDto
+                {
+                    DefaultModel = "gpt-5.3-codex",
+                    Stages = [new PipelineStageRequestDto { Type = "single_agent", Agent = new AgentRequestDto { EndpointId = "codex" } }]
+                }
+            }
+        };
+
+        var response = await executor.ExecuteAsync("run_test", request, store: true);
+
+        Assert.Equal("codex answer", response.Choices[0].Message.Content.AsText());
+        Assert.Equal(1, codex.Turns);
+        Assert.Empty(upstream.Requests);
+    }
+
+    [Theory]
+    [InlineData("temperature")]
+    [InlineData("top_p")]
+    [InlineData("top_k")]
+    [InlineData("min_p")]
+    [InlineData("repeat_penalty")]
+    [InlineData("max_tokens")]
+    public async Task CodexStageRejectsUnsupportedOptions(string parameter)
+    {
+        var upstream = new RecordingUpstreamClient("unused");
+        var codex = new FakeCodexAppServerClient();
+        var endpointStore = new FakeModelEndpointStore(new ModelEndpointDefinition
+        {
+            Id = "codex",
+            Kind = ModelEndpointKinds.CodexSubscription
+        });
+        var executor = CreateExecutor(upstream, endpointStore: endpointStore, codex: codex);
+        var request = new ChatCompletionRequest
+        {
+            Model = "gpt-5.3-codex",
+            Temperature = parameter == "temperature" ? 0.2 : null,
+            TopP = parameter == "top_p" ? 0.9 : null,
+            TopK = parameter == "top_k" ? 40 : null,
+            MinP = parameter == "min_p" ? 0.05 : null,
+            RepeatPenalty = parameter == "repeat_penalty" ? 1.1 : null,
+            MaxTokens = parameter == "max_tokens" ? 100 : null,
+            Messages = [new ChatMessageDto { Role = "user", Content = "write answer" }],
+            Orchestration = new OrchestrationRequestDto
+            {
+                Pipeline = new PipelineRequestDto
+                {
+                    Stages = [new PipelineStageRequestDto { Type = "single_agent", Agent = new AgentRequestDto { EndpointId = "codex" } }]
+                }
+            }
+        };
+
+        var error = await Assert.ThrowsAsync<PipelineValidationException>(() =>
+            executor.ExecuteAsync("run_test", request, store: true));
+
+        Assert.Equal(parameter, error.Param);
+        Assert.Equal("codex_parameter_unsupported", error.Code);
+        Assert.Equal(0, codex.Turns);
+        Assert.Empty(upstream.Requests);
     }
 
     [Fact]
@@ -889,8 +968,37 @@ public sealed class PipelineExecutorTests
             throw new NotSupportedException();
     }
 
-    private static PipelineExecutor CreateExecutor(IOpenAiCompatibleUpstreamClient upstream, string? pipelineProtocol = null) =>
-        new(upstream, new FakeModelEndpointStore(), new FakePipelineSettingsStore(pipelineProtocol), new NoopTraceStore(), new ActiveTraceHub());
+    private static PipelineExecutor CreateExecutor(
+        IOpenAiCompatibleUpstreamClient upstream,
+        string? pipelineProtocol = null,
+        IModelEndpointStore? endpointStore = null,
+        ICodexAppServerClient? codex = null) =>
+        new(
+            upstream,
+            new ModelEndpointDispatcher(upstream, new CodexSubscriptionClient(codex ?? new FakeCodexAppServerClient())),
+            endpointStore ?? new FakeModelEndpointStore(),
+            new FakePipelineSettingsStore(pipelineProtocol),
+            new NoopTraceStore(),
+            new ActiveTraceHub());
+
+    private sealed class FakeCodexAppServerClient : ICodexAppServerClient
+    {
+        public int Turns { get; private set; }
+
+        public Task<IReadOnlyList<CodexModel>> ListModelsAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<CodexModel>>([new CodexModel("gpt-5.3-codex")]);
+
+        public Task<CodexTurnResult> RunTurnAsync(string? model, IReadOnlyList<CodexInputItem> input, Func<CodexTurnDelta, CancellationToken, Task>? onDelta = null, CancellationToken cancellationToken = default)
+        {
+            Turns++;
+            return Task.FromResult(new CodexTurnResult
+            {
+                Id = "turn_test",
+                Model = model ?? "codex",
+                Content = "codex answer"
+            });
+        }
+    }
 
     private sealed class FakeModelEndpointStore(params ModelEndpointDefinition[] endpoints) : IModelEndpointStore
     {

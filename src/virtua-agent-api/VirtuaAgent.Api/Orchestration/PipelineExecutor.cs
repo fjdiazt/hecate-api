@@ -12,6 +12,7 @@ namespace VirtuaAgent.Orchestration;
 
 public sealed class PipelineExecutor(
     IOpenAiCompatibleUpstreamClient upstreamClient,
+    ModelEndpointDispatcher endpointDispatcher,
     IModelEndpointStore modelEndpointStore,
     IPipelineSettingsStore pipelineSettingsStore,
     ITraceStore traceStore,
@@ -39,6 +40,7 @@ public sealed class PipelineExecutor(
                 var agent = SelectAgent(stage, random);
                 var stageRequest = BuildSingleAgentRequest(request, context, pipeline, stage, agent, executionIndex, settings.PipelineProtocol);
                 var endpoint = await ResolveEndpointAsync(agent?.EndpointId ?? pipeline.DefaultEndpointId, $"orchestration.pipeline.stages[{stageIndex}].agent.endpoint_id", cancellationToken);
+                ValidateCodexRequest(stageRequest, endpoint);
                 await PublishAsync(runId, "agent_request", new
                 {
                     stage_index = executionIndex,
@@ -49,7 +51,7 @@ public sealed class PipelineExecutor(
 
                 lastResponse = endpoint is null
                     ? await upstreamClient.ChatAsync(stageRequest, cancellationToken)
-                    : await upstreamClient.ChatAsync(stageRequest, endpoint, cancellationToken);
+                    : await endpointDispatcher.ChatAsync(stageRequest, endpoint, cancellationToken);
                 context.CurrentAnswer = lastResponse.Choices.FirstOrDefault()?.Message.Content.AsText() ?? "";
                 context.CurrentAnswerLabel = BuildStageOutputLabel(stageIndex, repeatIndex, stage);
 
@@ -90,6 +92,7 @@ public sealed class PipelineExecutor(
                 var agent = SelectAgent(stage, random);
                 var stageRequest = BuildSingleAgentRequest(request, context, pipeline, stage, agent, executionIndex, settings.PipelineProtocol) with { Stream = true };
                 var endpoint = await ResolveEndpointAsync(agent?.EndpointId ?? pipeline.DefaultEndpointId, $"orchestration.pipeline.stages[{stageIndex}].agent.endpoint_id", cancellationToken);
+                ValidateCodexRequest(stageRequest, endpoint);
                 await PublishAsync(runId, "agent_request", new
                 {
                     stage_index = executionIndex,
@@ -170,7 +173,7 @@ public sealed class PipelineExecutor(
                 }
                 else
                 {
-                    await upstreamClient.StreamChatAsync(stageRequest, endpoint, onDataAsync, cancellationToken);
+                    await endpointDispatcher.StreamChatAsync(stageRequest, endpoint, onDataAsync, cancellationToken);
                 }
 
                 stageContent += thinkExtractor.Complete();
@@ -388,6 +391,27 @@ public sealed class PipelineExecutor(
         }
 
         return model;
+    }
+
+    private static void ValidateCodexRequest(ChatCompletionRequest request, ModelEndpointDefinition? endpoint)
+    {
+        if (endpoint?.Kind != ModelEndpointKinds.CodexSubscription) return;
+
+        var unsupported = request.Temperature is not null ? "temperature"
+            : request.TopP is not null ? "top_p"
+            : request.TopK is not null ? "top_k"
+            : request.MinP is not null ? "min_p"
+            : request.RepeatPenalty is not null ? "repeat_penalty"
+            : request.MaxTokens is not null ? "max_tokens"
+            : request.ExtraFields is { Count: > 0 } ? "request"
+            : null;
+        if (unsupported is not null)
+        {
+            throw new PipelineValidationException(
+                $"Codex subscription stages do not expose '{unsupported}'.",
+                unsupported,
+                "codex_parameter_unsupported");
+        }
     }
 
     private async Task<ModelEndpointDefinition?> ResolveEndpointAsync(string? endpointId, string param, CancellationToken cancellationToken)

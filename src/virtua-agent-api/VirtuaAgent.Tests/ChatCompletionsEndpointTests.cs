@@ -78,6 +78,42 @@ public sealed class ChatCompletionsEndpointTests
         Assert.Null(upstream.Requests[0].EndpointId);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DirectCodexEndpointIsRejectedBeforeStreamingStarts(bool stream)
+    {
+        await using var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.ConfigureTestServices(services =>
+                {
+                    services.RemoveAll<ITraceStore>();
+                    services.RemoveAll<IModelEndpointStore>();
+                    services.AddSingleton<ITraceStore>(new RecordingTraceStore());
+                    services.AddSingleton<IModelEndpointStore>(new InMemoryModelEndpointStore(
+                        new ModelEndpointDefinition
+                        {
+                            Id = "codex",
+                            Name = "Codex",
+                            Kind = ModelEndpointKinds.CodexSubscription
+                        }));
+                });
+            });
+        var response = await factory.CreateClient().PostAsJsonAsync("/v1/chat/completions", new ChatCompletionRequest
+        {
+            EndpointId = "codex",
+            Model = "gpt-5.3-codex",
+            Stream = stream,
+            Messages = [new ChatMessageDto { Role = "user", Content = "hello" }]
+        }, JsonOptions.Default);
+        var body = await response.Content.ReadFromJsonAsync<OpenAiErrorResponse>(JsonOptions.Default);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("endpoint_id", body!.Error.Param);
+        Assert.Equal("codex_pipeline_only", body.Error.Code);
+    }
+
     [Fact]
     public async Task MultimodalRequestTraceRedactsImagePayload()
     {

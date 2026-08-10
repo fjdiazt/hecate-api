@@ -35,7 +35,6 @@ public static class ChatCompletionsEndpoint
         if (request.Stream == true)
         {
             httpContext.Response.ContentType = "text/event-stream";
-            await httpContext.Response.StartAsync(cancellationToken);
         }
 
         var requestJson = JsonSerializer.Serialize(RedactRequestForTrace(request), JsonOptions.Default);
@@ -49,6 +48,24 @@ public static class ChatCompletionsEndpoint
         try
         {
             request = await ApplyPresetPipelineAsync(request, presetCatalog, cancellationToken);
+            ModelEndpointDefinition? endpoint = null;
+            if (request.Orchestration?.Pipeline is null)
+            {
+                endpoint = await ResolveEndpointAsync(request.EndpointId, modelEndpointStore, cancellationToken);
+                if (endpoint?.Kind == ModelEndpointKinds.CodexSubscription)
+                {
+                    throw new PipelineValidationException(
+                        "Codex subscription endpoints can only be used by Virtua Agent pipeline stages.",
+                        "endpoint_id",
+                        "codex_pipeline_only");
+                }
+            }
+
+            if (request.Stream == true)
+            {
+                await httpContext.Response.StartAsync(cancellationToken);
+            }
+
             if (request.Orchestration?.Pipeline is not null)
             {
                 await PipelineModelValidator.EnsureNoNestedPipelineModelsAsync(request.Orchestration.Pipeline, presetCatalog, cancellationToken: cancellationToken);
@@ -72,7 +89,6 @@ public static class ChatCompletionsEndpoint
                 return Results.Json(pipelineApiResponse, JsonOptions.Default);
             }
 
-            var endpoint = await ResolveEndpointAsync(request.EndpointId, modelEndpointStore, cancellationToken);
             var upstreamRequest = request with { EndpointId = null };
             if (request.Stream == true)
             {

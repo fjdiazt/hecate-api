@@ -54,7 +54,7 @@ public static class ModelEndpointsEndpoint
     public static async Task<IResult> ListModelsAsync(
         string id,
         IModelEndpointStore store,
-        IOpenAiCompatibleUpstreamClient upstreamClient,
+        ModelEndpointDispatcher endpointDispatcher,
         CancellationToken cancellationToken)
     {
         var endpoint = await store.GetAsync(id, cancellationToken);
@@ -65,7 +65,7 @@ public static class ModelEndpointsEndpoint
 
         try
         {
-            var models = await upstreamClient.ListModelsAsync(endpoint, cancellationToken);
+            var models = await endpointDispatcher.ListModelsAsync(endpoint, cancellationToken);
             return Results.Json(models, JsonOptions.Default);
         }
         catch (Exception ex)
