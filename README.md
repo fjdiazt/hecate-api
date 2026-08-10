@@ -19,7 +19,7 @@ Current direction is narrow and inspectable: improve AI responses through explic
 - Per-stage input routing for original messages and prior stage output.
 - Configurable pipeline protocol with pipeline-level and stage-level protocol overrides.
 - Saved pipeline model CRUD at `/v1/pipeline-models`.
-- Saved OpenAI-compatible endpoint CRUD at `/v1/model-endpoints`.
+- Saved OpenAI-compatible and Codex subscription endpoint CRUD at `/v1/model-endpoints`.
 - Built-in `virtua-agent-test` saved model fixture for visible `Draft -> Tighten -> Apply rules` mutation with repeat counts `1, 2, 1`.
 - SQLite trace storage for runs, trace events, request JSON, response JSON, and stage reasoning.
 - Live orchestration event stream at `/v1/orchestrations/{runId}/events`.
@@ -102,6 +102,8 @@ Defaults:
 - Container port: `8080`
 - Upstream URL: `http://192.168.100.101:8080`
 - SQLite database: `/data/virtua-agent.db` in the `virtua_agent_data` volume
+- Codex credentials: `/codex-home` in the private `codex_home` volume
+- Codex app-server: private Unix socket only; no host port
 
 Override with `.env` or shell variables:
 
@@ -397,6 +399,7 @@ Save extra OpenAI-compatible servers with `POST /v1/model-endpoints`:
 {
   "id": "local-vision",
   "name": "Local vision server",
+  "kind": "openai_compatible",
   "base_url": "http://localhost:8080",
   "api_key": null
 }
@@ -407,6 +410,44 @@ List models for a saved endpoint:
 ```text
 GET /v1/model-endpoints/local-vision/models
 ```
+
+## Codex Subscription Endpoints
+
+Docker Compose runs Codex CLI `0.147.0` in a separate sidecar. Virtua Agent connects through `/run/codex/app-server.sock`; the sidecar has no host port, database mount, or upstream API keys. Authenticate the persistent `codex_home` volume before use:
+
+```powershell
+docker compose stop codex
+docker compose run --rm --entrypoint codex codex login --device-auth
+docker compose up -d codex api
+```
+
+Create the endpoint from `/app/settings` or `POST /v1/model-endpoints`:
+
+```json
+{
+  "id": "codex-subscription",
+  "name": "ChatGPT Codex",
+  "kind": "codex_subscription"
+}
+```
+
+Select its saved id and a discovered Codex model in a pipeline stage:
+
+```json
+{
+  "type": "single_agent",
+  "name": "Draft",
+  "instructions": "Write the draft.",
+  "agent": {
+    "endpoint_id": "codex-subscription",
+    "model": "gpt-5.6-sol"
+  }
+}
+```
+
+Codex subscription endpoints are pipeline-stage-only. A direct top-level `endpoint_id` request returns `400` with code `codex_pipeline_only`; direct OpenAI-compatible proxy calls continue to use HTTP endpoints. Codex stages accept instructions, routed text, and OpenAI `image_url` data or HTTP URLs for PNG, JPEG, GIF, and WebP images up to 20 MiB. They reject `temperature`, `top_p`, `top_k`, `min_p`, `repeat_penalty`, `max_tokens`, and unknown extension fields because Codex turns do not implement those OpenAI request semantics.
+
+This integration is experimental and intended for a single user on a trusted network with trusted pipeline input. Each turn uses an ephemeral thread, read-only sandbox, disabled tool network access, and no approvals. Read-only mode prevents tool writes and network access; it does not prevent Codex from reading its sidecar filesystem or credentials. Remove the Compose project's `codex_home` volume to discard the login.
 
 ## Runs And Traces
 
