@@ -1163,7 +1163,7 @@ function SettingsPage() {
                 readOnly
               />
             )}
-            <Group grow align="end">
+            <Box className="endpoint-fields">
               <TextInput
                 label="Name"
                 value={draft.name}
@@ -1184,9 +1184,9 @@ function SettingsPage() {
                   api_key: value === 'codex_subscription' ? null : draft.api_key ?? ''
                 })}
               />
-            </Group>
+            </Box>
             {draft.kind === 'openai_compatible' && (
-              <Group grow align="end">
+              <Box className="endpoint-fields">
               <TextInput
                 label="Base URL"
                 placeholder="http://localhost:8080"
@@ -1199,7 +1199,7 @@ function SettingsPage() {
                 value={draft.api_key ?? ''}
                 onChange={(event) => setDraft({ ...draft, api_key: event.currentTarget.value })}
               />
-              </Group>
+              </Box>
             )}
             <Group justify="space-between">
               <Button
