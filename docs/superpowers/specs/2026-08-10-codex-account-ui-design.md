@@ -47,7 +47,7 @@ Reference: [Codex app-server protocol at `rust-v0.147.0`](https://github.com/ope
 An internal connection module owns:
 
 - Unix-domain socket creation.
-- WebSocket upgrade and framing through .NET standard-library WebSocket support.
+- WebSocket upgrade and framing through `ClientWebSocket.ConnectAsync` with an `HttpMessageInvoker` whose `SocketsHttpHandler.ConnectCallback` opens the Unix socket.
 - JSON-RPC serialization and parsing.
 - `initialize` / `initialized` handshake.
 - Deterministic socket and WebSocket cleanup.
@@ -66,6 +66,8 @@ Pipeline operations retain one connection per discovery or turn. No connection p
 
 A singleton account manager owns the temporary device-login lifecycle. It allows at most one active login and owns that login's WebSocket connection and reader.
 
+The account manager is a concrete module. No account-manager interface or second adapter is added; tests exercise the concrete module through the scripted local app-server.
+
 Responsibilities:
 
 - Read current account state.
@@ -77,7 +79,7 @@ Responsibilities:
 - Logout the current account.
 - Return transient email and plan information.
 
-The manager uses one state lock. It does not expose Codex `loginId` or an additional Virtua Agent attempt ID to callers. The project has one global account and one active attempt, so another identifier adds no useful isolation.
+The manager uses one state lock. The first login request reserves one shared start task while holding the lock, then performs socket I/O after releasing it. Concurrent login requests await that same task. The lock is never held during socket I/O. The manager does not expose Codex `loginId` or an additional Virtua Agent attempt ID to callers. The project has one global account and one active attempt, so another identifier adds no useful isolation.
 
 Completed credentials are not manager state. Codex persists them in `codex_home`; after an API restart, `account/read` reconstructs connected state. An unfinished attempt is intentionally lost and must be restarted.
 
@@ -89,10 +91,10 @@ Management routes are global rather than tied to a saved endpoint:
 GET    /v1/codex/account
 POST   /v1/codex/account/login
 DELETE /v1/codex/account/login
-POST   /v1/codex/account/logout
+DELETE /v1/codex/account
 ```
 
-`GET` returns the current state. `POST login` is idempotent: connected returns connected; connecting returns the existing attempt; disconnected or error starts a new attempt. `DELETE login` is idempotent when no attempt exists. Logout cancels an active attempt before signing out.
+`GET` returns the current state. `POST login` requires an `application/json` body of `{}` and is idempotent: connected returns connected; connecting returns the existing attempt; disconnected or error starts a new attempt. `DELETE login` is idempotent when no attempt exists. `DELETE account` cancels an active attempt before signing out. Requiring JSON for login and using DELETE for the other state changes prevents cross-origin HTML forms from invoking account mutations without a CORS preflight.
 
 State response:
 
@@ -115,20 +117,20 @@ State response:
 - `connected`: `account/read` reports a ChatGPT account.
 - `error`: the active attempt failed or timed out.
 
-`GET` returns HTTP `200` for every representable state, including `unavailable` and `error`, because those are the resource's state. Login and logout command requests return HTTP `503` when the sidecar cannot accept the command. Other command results return the resulting state.
+`GET` returns HTTP `200` for every representable state, including `unavailable` and `error`, because those are the resource's state. Login and logout command requests return HTTP `503` when the sidecar cannot accept the command. A login request with any content type other than `application/json` returns HTTP `415`. Other command results return the resulting state.
 
 ## Account Flow
 
 1. Settings loads `GET /v1/codex/account`.
 2. A disconnected account shows **Connect ChatGPT**.
-3. Clicking Connect calls `POST /v1/codex/account/login`.
+3. Clicking Connect calls `POST /v1/codex/account/login` with an `application/json` body of `{}`.
 4. The account manager opens and initializes a dedicated app-server connection, starts `chatgptDeviceCode`, and returns `connecting` with URL and code.
 5. The UI opens a dialog showing the code, **Copy code**, **Open login page**, and **Cancel**.
 6. The UI polls `GET /v1/codex/account` every two seconds only while status is `connecting`.
 7. The account manager receives `account/login/completed` on the login connection. On success it reads the account, closes the connection, and reports `connected`.
 8. The dialog closes automatically and the account section shows email and plan.
 9. Cancel signals the manager. The manager, as the connection's only reader, sends `account/login/cancel` with a fresh short timeout and closes the connection after acknowledgement or timeout.
-10. Sign out requires confirmation and calls `POST /v1/codex/account/logout`.
+10. Sign out requires confirmation and calls `DELETE /v1/codex/account`.
 11. Switch account confirms sign-out, logs out, and starts the same device-login flow.
 
 A page refresh during login reads the manager's current `connecting` state and restores the dialog. An API restart during login loses the temporary state; the UI shows the state returned by a fresh `account/read` and permits a new attempt.
@@ -170,10 +172,10 @@ Allowed values remain:
 
 The UI label becomes **Type**. No temporary `kind` alias is added because the feature branch has not been merged or published.
 
-SQLite migration handles both possible local starting states:
+SQLite migration handles both possible local starting states inside one transaction:
 
 - Neither column exists: add `type` with default `openai_compatible`.
-- `kind` exists and `type` does not: rename or migrate `kind` to `type` without changing values.
+- `kind` exists and `type` does not: run `ALTER TABLE model_endpoints RENAME COLUMN kind TO type`.
 - `type` exists: make no schema change.
 
 Existing endpoint rows remain OpenAI-compatible unless already marked as Codex subscription.
@@ -181,7 +183,8 @@ Existing endpoint rows remain OpenAI-compatible unless already marked as Codex s
 ## Concurrency And Cleanup
 
 - Only one login can be active.
-- Duplicate Connect returns the same in-memory state.
+- The first Connect reserves a shared start task under the state lock; duplicate Connect calls await it.
+- The state lock is never held during socket or WebSocket I/O.
 - The login connection has one reader owner; cancel signals that owner instead of reading concurrently.
 - Every operation closes its WebSocket and Unix socket on success, failure, cancellation, and timeout.
 - Login timeout is 10 minutes.
@@ -192,7 +195,7 @@ Existing endpoint rows remain OpenAI-compatible unless already marked as Codex s
 - Sidecar connection or handshake failure maps to `unavailable` without exposing socket paths or raw payloads.
 - Device-login errors are sanitized and shown in the dialog with Retry.
 - A timed-out login becomes `error` with a login-timeout message.
-- Logout failure keeps the last connected account visible and shows the operation error.
+- After a logout error, the manager performs a fresh `account/read`. The UI shows that verified state; if the account cannot be read, it shows `unavailable` rather than stale connected metadata.
 - Model discovery and pipeline execution retain the existing explicit unauthenticated error.
 - Account operations do not create orchestration runs or trace events.
 - Account email, plan, verification URL, user code, Codex login ID, and protocol payloads are excluded from application logs and SQLite.
@@ -209,6 +212,8 @@ The sidecar remains private:
 
 Virtua Agent still has no application authentication. Anyone who can reach its management interface could connect or disconnect the global Codex account. This feature does not hide that risk; deployment documentation must continue to require a single-user trusted network or an authenticating reverse proxy.
 
+State-changing account routes also resist browser CSRF within that trust model: login accepts JSON only, while cancellation and logout use DELETE. No permissive CORS policy is added.
+
 ## Verification
 
 Automated coverage:
@@ -218,11 +223,13 @@ Automated coverage:
 - Account states for connected, disconnected, and unavailable.
 - Device login start and completion.
 - Duplicate login start.
+- Concurrent login start calls share one start operation.
 - Cancellation and timeout.
 - Logout and switch-account sequence.
+- Logout response failure followed by a verified account reread.
 - Connection closure on every failure path.
 - Endpoint `type` serialization, validation, persistence, and `kind`-to-`type` migration.
-- Account route response shapes and command failure status codes.
+- Account route response shapes, JSON content-type enforcement, and command failure status codes.
 - Frontend production build.
 
 Visual verification at `1440x900` and `390x844`:
