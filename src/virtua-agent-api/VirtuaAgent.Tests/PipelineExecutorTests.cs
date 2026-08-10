@@ -745,6 +745,41 @@ public sealed class PipelineExecutorTests
     }
 
     [Fact]
+    public async Task CodexStageRejectsUnknownRequestFields()
+    {
+        var codex = new FakeCodexAppServerClient();
+        var endpointStore = new FakeModelEndpointStore(new ModelEndpointDefinition
+        {
+            Id = "codex",
+            Kind = ModelEndpointKinds.CodexSubscription
+        });
+        var executor = CreateExecutor(new RecordingUpstreamClient("unused"), endpointStore: endpointStore, codex: codex);
+        var request = new ChatCompletionRequest
+        {
+            Model = "gpt-5.3-codex",
+            Messages = [new ChatMessageDto { Role = "user", Content = "write answer" }],
+            ExtraFields = new Dictionary<string, System.Text.Json.JsonElement>
+            {
+                ["unsupported"] = System.Text.Json.JsonDocument.Parse("true").RootElement.Clone()
+            },
+            Orchestration = new OrchestrationRequestDto
+            {
+                Pipeline = new PipelineRequestDto
+                {
+                    Stages = [new PipelineStageRequestDto { Type = "single_agent", Agent = new AgentRequestDto { EndpointId = "codex" } }]
+                }
+            }
+        };
+
+        var error = await Assert.ThrowsAsync<PipelineValidationException>(() =>
+            executor.ExecuteAsync("run_test", request, store: true));
+
+        Assert.Equal("request", error.Param);
+        Assert.Equal("codex_parameter_unsupported", error.Code);
+        Assert.Equal(0, codex.Turns);
+    }
+
+    [Fact]
     public async Task StageWithMissingEndpointIdIsRejected()
     {
         var upstream = new RecordingUpstreamClient("answer");

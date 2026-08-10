@@ -62,6 +62,19 @@ public sealed class CodexSubscriptionClientTests
     }
 
     [Fact]
+    public async Task ChatRejectsDataImageOverTwentyMibibytes()
+    {
+        var client = new CodexSubscriptionClient(new FakeCodexAppServerClient());
+        var encoded = new string('A', ((20 * 1024 * 1024 + 1 + 2) / 3) * 4);
+
+        var error = await Assert.ThrowsAsync<PipelineValidationException>(() =>
+            client.ChatAsync(RequestWithImage($"data:image/png;base64,{encoded}")));
+
+        Assert.Equal("messages", error.Param);
+        Assert.Equal("invalid_image_url", error.Code);
+    }
+
+    [Fact]
     public async Task ChatMapsFinalResponseAndUsage()
     {
         var appServer = new FakeCodexAppServerClient
