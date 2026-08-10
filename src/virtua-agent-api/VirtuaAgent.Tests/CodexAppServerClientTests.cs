@@ -131,6 +131,21 @@ public sealed class CodexAppServerClientTests
         Assert.Equal("Codex sidecar is unavailable.", error.Message);
     }
 
+    [Fact]
+    public async Task HandshakeErrorClosesConnection()
+    {
+        await using var server = await ScriptedUnixServer.StartAsync(async (reader, writer) =>
+        {
+            await RespondAsync(reader, writer, "initialize", """{"id":1,"error":{"message":"initialize failed"}}""");
+            Assert.Null(await reader.ReadLineAsync());
+        });
+        var client = CreateClient(server.Path);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.ListModelsAsync());
+
+        Assert.Equal("initialize failed", error.Message);
+    }
+
     private static CodexAppServerClient CreateClient(string socketPath) =>
         new(Options.Create(new CodexOptions
         {

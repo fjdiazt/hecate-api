@@ -128,7 +128,7 @@ public sealed class CodexAppServerClient(IOptions<CodexOptions> options) : ICode
 
     private async Task<CodexConnection> OpenInitializedAsync(CancellationToken cancellationToken)
     {
-        CodexConnection connection;
+        CodexConnection? connection = null;
         try
         {
             connection = await CodexConnection.OpenAsync(_options, cancellationToken);
@@ -144,22 +144,16 @@ public sealed class CodexAppServerClient(IOptions<CodexOptions> options) : ICode
                 !value.TryGetProperty("type", out var type) ||
                 type.GetString() != "chatgpt")
             {
-                await connection.DisposeAsync();
                 throw new InvalidOperationException("Codex subscription is not authenticated. Run 'codex login --device-auth' in the Codex sidecar.");
             }
 
             return connection;
         }
-        catch (InvalidOperationException)
+        catch (Exception ex)
         {
-            throw;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception)
-        {
+            if (connection is not null) await connection.DisposeAsync();
+            if (ex is InvalidOperationException ||
+                ex is OperationCanceledException && cancellationToken.IsCancellationRequested) throw;
             throw new InvalidOperationException("Codex sidecar is unavailable.");
         }
     }
