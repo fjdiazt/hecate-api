@@ -42,6 +42,7 @@ import {
 import { useMediaQuery } from '@mantine/hooks';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import logoUrl from '../../../assets/logo.png';
+import { CodexAccountPanel } from './CodexAccountPanel';
 import {
   deleteModelEndpoint,
   deleteVirtuaAgentModel,
@@ -1088,7 +1089,7 @@ function SettingsPage() {
     <Stack gap="lg">
       <Box>
         <Title order={2}>Settings</Title>
-        <Text c="dimmed">Pipeline protocol and model endpoints.</Text>
+        <Text c="dimmed">Pipeline protocol, Codex account, and model endpoints.</Text>
       </Box>
 
       {endpointLoadError && (
@@ -1132,6 +1133,8 @@ function SettingsPage() {
           </Group>
         </Stack>
       </Paper>
+
+      <CodexAccountPanel />
 
       <Box className="models-grid">
         <Paper withBorder p="sm">

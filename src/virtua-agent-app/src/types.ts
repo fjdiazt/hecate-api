@@ -17,6 +17,22 @@ export type ModelEndpoint = {
   has_api_key: boolean;
 };
 
+export type CodexAccountStatus =
+  | 'unavailable'
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'error';
+
+export type CodexAccountState = {
+  status: CodexAccountStatus;
+  email: string | null;
+  plan_type: string | null;
+  verification_url: string | null;
+  user_code: string | null;
+  error: string | null;
+};
+
 export type ModelEndpointType = 'openai_compatible' | 'codex_subscription';
 
 export type SaveModelEndpointRequest = {

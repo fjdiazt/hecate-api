@@ -1,4 +1,5 @@
 import type {
+  CodexAccountState,
   ModelDto,
   ModelEndpoint,
   ModelListResponse,
@@ -32,6 +33,38 @@ function errorMessageFrom(text: string, status: number) {
   }
 
   return text;
+}
+
+async function readAccountState(response: Response): Promise<CodexAccountState> {
+  const text = await response.text();
+  try {
+    const state = JSON.parse(text) as CodexAccountState;
+    if ((response.ok || response.status === 503) && typeof state.status === 'string') return state;
+  } catch {
+    // Fall through to the shared HTTP error formatter.
+  }
+
+  throw new Error(errorMessageFrom(text, response.status));
+}
+
+export async function getCodexAccount(): Promise<CodexAccountState> {
+  return readAccountState(await fetch('/v1/codex/account'));
+}
+
+export async function startCodexLogin(): Promise<CodexAccountState> {
+  return readAccountState(await fetch('/v1/codex/account/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}'
+  }));
+}
+
+export async function cancelCodexLogin(): Promise<CodexAccountState> {
+  return readAccountState(await fetch('/v1/codex/account/login', { method: 'DELETE' }));
+}
+
+export async function logoutCodexAccount(): Promise<CodexAccountState> {
+  return readAccountState(await fetch('/v1/codex/account', { method: 'DELETE' }));
 }
 
 async function fetchModelDiscovery(url: string): Promise<Response> {

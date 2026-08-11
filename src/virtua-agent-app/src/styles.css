@@ -44,6 +44,21 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.codex-account-meta {
+  gap: 16px;
+}
+
+.codex-device-code {
+  border: 1px solid var(--mantine-color-dark-4);
+  border-radius: 8px;
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 24px;
+  overflow-wrap: anywhere;
+  padding: 16px;
+  text-align: center;
+  user-select: all;
+}
+
 .table-scroll {
   overflow-x: auto;
 }
@@ -115,6 +130,11 @@ body {
 }
 
 @media (max-width: 700px) {
+  .codex-account-meta {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .endpoint-fields {
     grid-template-columns: 1fr;
   }
