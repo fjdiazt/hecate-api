@@ -706,7 +706,7 @@ public sealed class PipelineExecutorTests
     [InlineData("min_p")]
     [InlineData("repeat_penalty")]
     [InlineData("max_tokens")]
-    public async Task CodexStageRejectsUnsupportedOptions(string parameter)
+    public async Task CodexStageIgnoresUnsupportedOptions(string parameter)
     {
         var upstream = new RecordingUpstreamClient("unused");
         var codex = new FakeCodexAppServerClient();
@@ -735,12 +735,9 @@ public sealed class PipelineExecutorTests
             }
         };
 
-        var error = await Assert.ThrowsAsync<PipelineValidationException>(() =>
-            executor.ExecuteAsync("run_test", request, store: true));
+        await executor.ExecuteAsync("run_test", request, store: true);
 
-        Assert.Equal(parameter, error.Param);
-        Assert.Equal("codex_parameter_unsupported", error.Code);
-        Assert.Equal(0, codex.Turns);
+        Assert.Equal(1, codex.Turns);
         Assert.Empty(upstream.Requests);
     }
 

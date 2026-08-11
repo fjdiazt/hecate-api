@@ -40,13 +40,15 @@ public sealed class PipelineExecutor(
                 var agent = SelectAgent(stage, random);
                 var stageRequest = BuildSingleAgentRequest(request, context, pipeline, stage, agent, executionIndex, settings.PipelineProtocol);
                 var endpoint = await ResolveEndpointAsync(agent?.EndpointId ?? pipeline.DefaultEndpointId, $"orchestration.pipeline.stages[{stageIndex}].agent.endpoint_id", cancellationToken);
-                ValidateCodexRequest(stageRequest, endpoint);
+                var normalized = NormalizeCodexRequest(stageRequest, endpoint);
+                stageRequest = normalized.Request;
                 await PublishAsync(runId, "agent_request", new
                 {
                     stage_index = executionIndex,
                     endpoint_id = endpoint?.Id,
                     model = stageRequest.Model,
-                    instructions_preview = PreviewInstructions(stage.Instructions)
+                    instructions_preview = PreviewInstructions(stage.Instructions),
+                    ignored_parameters = normalized.IgnoredParameters
                 }, store, cancellationToken);
 
                 lastResponse = endpoint is null
@@ -92,13 +94,15 @@ public sealed class PipelineExecutor(
                 var agent = SelectAgent(stage, random);
                 var stageRequest = BuildSingleAgentRequest(request, context, pipeline, stage, agent, executionIndex, settings.PipelineProtocol) with { Stream = true };
                 var endpoint = await ResolveEndpointAsync(agent?.EndpointId ?? pipeline.DefaultEndpointId, $"orchestration.pipeline.stages[{stageIndex}].agent.endpoint_id", cancellationToken);
-                ValidateCodexRequest(stageRequest, endpoint);
+                var normalized = NormalizeCodexRequest(stageRequest, endpoint);
+                stageRequest = normalized.Request;
                 await PublishAsync(runId, "agent_request", new
                 {
                     stage_index = executionIndex,
                     endpoint_id = endpoint?.Id,
                     model = stageRequest.Model,
-                    instructions_preview = PreviewInstructions(stage.Instructions)
+                    instructions_preview = PreviewInstructions(stage.Instructions),
+                    ignored_parameters = normalized.IgnoredParameters
                 }, store, cancellationToken);
 
                 var stageContent = "";
@@ -393,25 +397,37 @@ public sealed class PipelineExecutor(
         return model;
     }
 
-    private static void ValidateCodexRequest(ChatCompletionRequest request, ModelEndpointDefinition? endpoint)
+    private static (ChatCompletionRequest Request, string[] IgnoredParameters) NormalizeCodexRequest(
+        ChatCompletionRequest request,
+        ModelEndpointDefinition? endpoint)
     {
-        if (endpoint?.Type != ModelEndpointTypes.CodexSubscription) return;
+        if (endpoint?.Type != ModelEndpointTypes.CodexSubscription) return (request, []);
 
-        var unsupported = request.Temperature is not null ? "temperature"
-            : request.TopP is not null ? "top_p"
-            : request.TopK is not null ? "top_k"
-            : request.MinP is not null ? "min_p"
-            : request.RepeatPenalty is not null ? "repeat_penalty"
-            : request.MaxTokens is not null ? "max_tokens"
-            : request.ExtraFields is { Count: > 0 } ? "request"
-            : null;
-        if (unsupported is not null)
+        if (request.ExtraFields is { Count: > 0 })
         {
             throw new PipelineValidationException(
-                $"Codex subscription stages do not expose '{unsupported}'.",
-                unsupported,
+                "Codex subscription stages do not expose 'request'.",
+                "request",
                 "codex_parameter_unsupported");
         }
+
+        var ignored = new List<string>(6);
+        if (request.Temperature is not null) ignored.Add("temperature");
+        if (request.TopP is not null) ignored.Add("top_p");
+        if (request.TopK is not null) ignored.Add("top_k");
+        if (request.MinP is not null) ignored.Add("min_p");
+        if (request.RepeatPenalty is not null) ignored.Add("repeat_penalty");
+        if (request.MaxTokens is not null) ignored.Add("max_tokens");
+
+        return (request with
+        {
+            Temperature = null,
+            TopP = null,
+            TopK = null,
+            MinP = null,
+            RepeatPenalty = null,
+            MaxTokens = null
+        }, ignored.ToArray());
     }
 
     private async Task<ModelEndpointDefinition?> ResolveEndpointAsync(string? endpointId, string param, CancellationToken cancellationToken)
